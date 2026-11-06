@@ -1,30 +1,57 @@
 name: Release
 
-# Publishes to npm when a version tag (v0.1.0) is pushed, through npm Trusted Publishing:
-# no token is stored; npm trusts this workflow of this repository (package settings on
-# npmjs.com → Trusted Publisher) and adds a provenance statement to the release.
+# Releases what main says: when package.json's version has no v<version> tag yet, this checks,
+# publishes to npm, then tags the commit and creates the GitHub Release. To release, bump the
+# version (package.json and src/version.ts) and merge; nobody pushes a tag by hand.
+#
+# npm Trusted Publishing: no token is stored; npm trusts this workflow file of this repository
+# (package settings on npmjs.com → Trusted Publisher, workflow release.yml) and adds provenance.
 on:
   push:
-    tags: ['v*']
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   id-token: write
 
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
-  publish:
+  release:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Version to release
+        id: version
+        run: |
+          version="$(node -p 'require("./package.json").version')"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code --tags origin "refs/tags/v$version" > /dev/null; then
+            echo "v$version is already released"
+            echo "new=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "new=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.version.outputs.new == 'true'
+        uses: actions/setup-node@v4
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
           cache: npm
       # Trusted Publishing needs npm 11.5.1 or later.
-      - run: npm install -g npm@latest
-      - name: The tag is package.json's version
-        run: test "${GITHUB_REF_NAME}" = "v$(node -p 'require("./package.json").version')"
-      - run: npm ci
-      # prepublishOnly runs the typecheck, the tests and the build.
-      - run: npm publish
+      - if: steps.version.outputs.new == 'true'
+        run: npm install -g npm@latest
+      - if: steps.version.outputs.new == 'true'
+        run: npm ci
+      # prepublishOnly runs the typecheck, the tests and the build first.
+      - if: steps.version.outputs.new == 'true'
+        run: npm publish
+      - if: steps.version.outputs.new == 'true'
+        name: Tag and GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: gh release create "$TAG" --target "$GITHUB_SHA" --title "$TAG" --generate-notes

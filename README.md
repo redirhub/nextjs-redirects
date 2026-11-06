@@ -204,9 +204,11 @@ Change both repositories together; CI flags a difference. `src/index.ts` is the 
 
 ## Releasing
 
-Set `version` in `package.json` (and `VERSION` in `src/version.ts`; a test checks they match),
-merge, then push the tag: `git tag v0.1.1 && git push origin v0.1.1`. The Release workflow
-publishes to npm through Trusted Publishing, with provenance; no npm token is stored anywhere.
+Bump `version` in `package.json` and `VERSION` in `src/version.ts` (a test checks they match) and
+merge to `main`. The Release workflow sees a version without a tag, runs the checks, publishes to
+npm through Trusted Publishing (with provenance, no npm token stored anywhere), then tags the
+commit `v<version>` and creates the GitHub Release. Nobody pushes a tag by hand; a push without a
+version change releases nothing.
 
 ## License
 
