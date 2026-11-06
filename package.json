@@ -1,6 +1,6 @@
 {
   "name": "@redirhub/nextjs-redirects",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Bulk redirects for Next.js from a remote rules file: thousands of 301/302 redirects, short links and website migrations in proxy.ts or middleware, live within a minute without a redeploy. Vercel and self-hosted. RedirHub Integration Mode.",
   "keywords": [
     "nextjs",
