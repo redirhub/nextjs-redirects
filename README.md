@@ -148,6 +148,12 @@ npm run check:core   # src/core and test/core are the same as redirhub/cloudflar
 are shared, file for file, with [cloudflare-redirects](https://github.com/redirhub/cloudflare-redirects).
 Change both repositories together; CI flags a difference. `src/index.ts` is the Next.js part.
 
+## Releasing
+
+Set `version` in `package.json` (and `VERSION` in `src/version.ts`; a test checks they match),
+merge, then push the tag: `git tag v0.1.1 && git push origin v0.1.1`. The Release workflow
+publishes to npm through Trusted Publishing, with provenance; no npm token is stored anywhere.
+
 ## License
 
 Apache License 2.0, see [LICENSE](LICENSE). Copyright 2026 RedirHub.
