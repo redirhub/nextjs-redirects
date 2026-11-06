@@ -1,0 +1,30 @@
+{
+  "name": "@redirhub/nextjs-redirects",
+  "version": "0.1.0",
+  "description": "Bulk redirects for Next.js from a remote rules file (RedirHub Integration Mode): exact redirects in proxy.ts, visit reports in the background.",
+  "keywords": ["redirects", "301", "seo", "404", "nextjs", "next.js", "proxy", "middleware", "vercel", "redirhub"],
+  "license": "Apache-2.0",
+  "author": "RedirHub",
+  "homepage": "https://github.com/redirhub/nextjs-redirects#readme",
+  "repository": { "type": "git", "url": "git+https://github.com/redirhub/nextjs-redirects.git" },
+  "bugs": "https://github.com/redirhub/nextjs-redirects/issues",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" }
+  },
+  "files": ["dist", "LICENSE", "NOTICE", "README.md"],
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test 'test/*.test.ts' 'test/core/*.test.ts'",
+    "check:spec": "node scripts/check-spec.ts",
+    "check:core": "node scripts/check-core.ts",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.9.0"
+  }
+}
