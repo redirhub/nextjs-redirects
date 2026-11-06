@@ -32,6 +32,13 @@ export interface RedirectsOptions {
    */
   hostname?: (request: Request) => string | null
   /**
+   * The path the visitor asked for, percent-encoded as in a URL (`/caf%C3%A9`): it is matched,
+   * appended by a catch-all with `p` and reported. Return null to leave the request alone, as with
+   * `hostname`. Default: the request URL's path. Set it where the platform changed the path before
+   * your code sees it, e.g. a proxy that strips a prefix.
+   */
+  path?: (request: Request) => string | null
+  /**
    * The visitor's address in reports: only a value the platform sets, never a header a client can
    * forge. Null writes `-`.
    */
@@ -100,11 +107,20 @@ export function createRedirects(options: InternalOptions): Redirects {
     }
   }
 
-  /** The hostname of a request as listed in the rules (lowercase, no port), or null to leave it alone. */
-  const hostnameFor = (request: Request): string | null => {
-    const value = options.hostname ? options.hostname(request) : (request.headers.get('host') ?? new URL(request.url).host)
-    const name = value === null ? '' : normalizeHost(value)
-    return name === '' ? null : name
+  /**
+   * What the visitor asked for: the hostname as listed in the rules (lowercase, no port) and the
+   * URL with the visitor's path, or null when `hostname` or `path` leaves the request alone.
+   */
+  const visitOf = (request: Request): { name: string; url: URL } | null => {
+    const url = new URL(request.url)
+    const hostname = options.hostname ? options.hostname(request) : (request.headers.get('host') ?? url.host)
+    const name = hostname === null ? '' : normalizeHost(hostname)
+    const path = options.path ? options.path(request) : url.pathname
+    if (name === '' || path === null) {
+      return null
+    }
+    url.pathname = path
+    return { name, url }
   }
 
   const keepAliveOf = (context?: WaitUntil): KeepAlive | undefined => (context ? (work) => context.waitUntil(work) : undefined)
@@ -150,17 +166,17 @@ export function createRedirects(options: InternalOptions): Redirects {
     }
     try {
       // Before the rules: a request the integration leaves alone never waits for them.
-      const name = hostnameFor(request)
-      if (name === null) {
+      const visit = visitOf(request)
+      if (visit === null) {
         return null
       }
+      const { name, url } = visit
       const keepAlive = keepAliveOf(context)
       const rules = await source.get(keepAlive)
       const host = rules?.hosts.get(name)
       if (!rules || !host) {
         return null
       }
-      const url = new URL(request.url)
       if (url.pathname === rules.checkPath) {
         const body = `token=${host.token} etag=${rules.etag}`
         return new Response(request.method === 'HEAD' ? null : body, {
@@ -185,13 +201,13 @@ export function createRedirects(options: InternalOptions): Redirects {
       if (!rules) {
         return response
       }
-      const name = hostnameFor(request)
-      if (name === null) {
+      const visit = visitOf(request)
+      if (visit === null) {
         return response
       }
+      const { name, url } = visit
       const host = rules.hosts.get(name)
       const keepAlive = keepAliveOf(context)
-      const url = new URL(request.url)
       if (host?.catchAll) {
         await response.body?.cancel()
         return redirect(request, url, rules, host, host.catchAll, keepAlive)

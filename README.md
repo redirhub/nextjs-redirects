@@ -90,6 +90,7 @@ export async function proxy(request: NextRequest, event: NextFetchEvent) {
 | `rulesUrl` | The rules address. Empty: off, every request goes to the app. |
 | `key` | The integration key. Without it redirects work and nothing is reported. |
 | `hostname(request)` | The hostname to look up in the rules; `null` leaves the request alone (no rules loaded, nothing reported). Default the `Host` header. |
+| `path(request)` | The path the visitor asked for, percent-encoded; `null` leaves the request alone. Default the request URL's path. |
 | `clientIp(request)` | The visitor's address in reports; default the first `X-Forwarded-For` value. `null` writes `-`. |
 | `userAgent(request)` | The User-Agent in reports; default the `User-Agent` header. `null` writes `-`. |
 | `scheme(request)` | `http` or `https` as the visitor asked; default `X-Forwarded-Proto`, else the URL's. |
@@ -111,6 +112,11 @@ const redirects = createProxy({
     if (host?.endsWith('.vercel.app')) return 'shop.example.com' // previews act as production
     return host
   },
+  // A proxy in front strips /shop; /api never goes through the rules.
+  path: (request) => {
+    const { pathname } = new URL(request.url)
+    return pathname.startsWith('/api/') ? null : `${request.headers.get('x-forwarded-prefix') ?? ''}${pathname}`
+  },
   // Behind your own proxy: the headers it sets.
   clientIp: (request) => request.headers.get('x-real-ip'),
   userAgent: (request) => request.headers.get('x-original-user-agent') ?? request.headers.get('user-agent'),
@@ -118,8 +124,10 @@ const redirects = createProxy({
 })
 ```
 
-The hostname `hostname` returns is the one matched, answered on the check path and reported, so
-all three agree. A request it leaves alone costs nothing: the rules are not even loaded for it.
+The hostname and path these return are the ones matched, answered on the check path, appended by
+a catch-all and reported, so they always agree. Options that identify the request (`hostname`,
+`path`) leave it alone on `null`, and such a request costs nothing: the rules are not even loaded
+for it. Options that are only reported (`clientIp`, `userAgent`) write `-` on `null`.
 
 ## Behaviour
 

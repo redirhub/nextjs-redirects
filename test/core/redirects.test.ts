@@ -105,6 +105,41 @@ describe('createRedirects', () => {
     assert.match(p.lines[0], /^- - - \[[^\]]+\] "GET https:\/\/shop\.example\.test\/old HTTP\/1\.1" 301 0 "-" "Visitor\/2\.0" file=/)
   })
 
+  it('matches, appends and reports the path that path returns, and leaves a request alone on null', async () => {
+    const p = platform()
+    let downloads = 0
+    const redirects = createRedirects({
+      rulesUrl: RULES,
+      key: 'k',
+      // A proxy in front strips /shop and says so in a header; /api never goes through the rules.
+      path: (request) => {
+        const { pathname } = new URL(request.url)
+        return pathname.startsWith('/api/') ? null : `${request.headers.get('x-forwarded-prefix') ?? ''}${pathname}`
+      },
+      fetch: async (input, init) => {
+        if (String(input) === RULES) downloads++
+        return String(input) === RULES
+          ? new Response(`${FILE}shop.example.test/shop/old\thttps://shop.example.test/new\n`, { headers: { ETag: '"r1"' } })
+          : p.fetch(input, init)
+      },
+      logger: null,
+    })
+    const api = await redirects.serve(new Request('https://shop.example.test/api/x'), async () => new Response('api', { status: 404 }))
+    assert.equal(await api.text(), 'api')
+    assert.equal(downloads, 0, 'a path left alone never waits for the rules')
+
+    const headers = { 'x-forwarded-prefix': '/shop' }
+    const exact = await redirects.handle(new Request('https://shop.example.test/old', { headers }))
+    assert.equal(exact?.headers.get('location'), 'https://shop.example.test/new', 'the rule for /shop/old')
+    const gone = await redirects.serve(new Request('https://shop.example.test/gone', { headers }), async () => new Response(null, { status: 404 }))
+    assert.equal(gone.headers.get('location'), 'https://www.example.test/shop/gone', 'the catch-all appends the visitor path')
+    await redirects.flush()
+    assert.deepEqual(
+      p.lines.map((line) => line.split('"')[1]),
+      ['GET https://shop.example.test/shop/old HTTP/1.1', 'GET https://shop.example.test/shop/gone HTTP/1.1']
+    )
+  })
+
   it('fails open', async () => {
     assert.equal(await createRedirects({ rulesUrl: '' }).handle(new Request('https://shop.example.test/old')), null)
     const broken = createRedirects({ rulesUrl: RULES, fetch: async () => Promise.reject(new Error('down')), logger: null })
