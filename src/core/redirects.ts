@@ -20,6 +20,11 @@ export interface RedirectsOptions {
   /** The integration key. Without it redirects work and nothing is reported. */
   key?: string | null
   /**
+   * Whether to report, over the key: `false` reports nothing, a function decides per request
+   * (e.g. not for preview deployments). Default: report whenever there is a key.
+   */
+  report?: boolean | ((request: Request) => boolean)
+  /**
    * Which 404 answers of the site are reported (where the site's answer is seen, `afterSite`):
    * `rules` (default) for hostnames whose `@host` line has `report404`, `all` for every hostname.
    */
@@ -38,6 +43,11 @@ export interface RedirectsOptions {
    * your code sees it, e.g. a proxy that strips a prefix.
    */
   path?: (request: Request) => string | null
+  /**
+   * The `Location` to send, from the one the rule gives (e.g. a same-site target in the visitor's
+   * language). It is also what the report names as the destination. Default: as the rule gives it.
+   */
+  location?: (location: string, request: Request) => string
   /**
    * The visitor's address in reports: only a value the platform sets, never a header a client can
    * forge. Null writes `-`.
@@ -126,7 +136,7 @@ export function createRedirects(options: InternalOptions): Redirects {
   const keepAliveOf = (context?: WaitUntil): KeepAlive | undefined => (context ? (work) => context.waitUntil(work) : undefined)
 
   const report = (request: Request, url: URL, host: string, status: number, size: number, keepAlive: KeepAlive | undefined, redirect?: { source: string; location: string }) => {
-    if (!reporter) {
+    if (!reporter || options.report === false || (typeof options.report === 'function' && !options.report(request))) {
       return
     }
     const ip = options.clientIp?.(request) ?? null
@@ -151,7 +161,8 @@ export function createRedirects(options: InternalOptions): Redirects {
   }
 
   const redirect = (request: Request, url: URL, rules: RuleSet, host: HostRules, rule: Rule, keepAlive: KeepAlive | undefined): Response => {
-    const location = buildLocation(rule, url)
+    const target = buildLocation(rule, url)
+    const location = options.location ? options.location(target, request) : target
     const headers = new Headers({ Location: byteString(location) })
     if (rules.poweredBy) {
       headers.set('X-Powered-By', rules.poweredBy)

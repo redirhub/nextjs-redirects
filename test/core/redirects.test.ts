@@ -140,6 +140,48 @@ describe('createRedirects', () => {
     )
   })
 
+  it('reports only where report allows, even with a key', async () => {
+    const p = platform()
+    const make = (report: boolean | ((request: Request) => boolean)) =>
+      createRedirects({ rulesUrl: RULES, key: 'k', report, fetch: p.fetch, logger: null })
+    const off = make(false)
+    await off.handle(new Request('https://shop.example.test/old'))
+    await off.flush()
+    assert.equal(p.lines.length, 0, 'report: false sends nothing')
+
+    const live = make((request) => !request.headers.has('x-preview'))
+    await live.handle(new Request('https://shop.example.test/old', { headers: { 'x-preview': '1' } }))
+    const response = await live.handle(new Request('https://shop.example.test/old'))
+    await live.flush()
+    assert.equal(response?.status, 301, 'redirects either way')
+    assert.equal(p.lines.length, 1, 'only the request report allows')
+  })
+
+  it('sends and reports the Location that location returns: one rule for every language', async () => {
+    const p = platform()
+    const localeOf = (request: Request) => /^\/(es|fr)(?=\/|$)/.exec(new URL(request.url).pathname)?.[1] ?? null
+    const redirects = createRedirects({
+      rulesUrl: RULES,
+      key: 'k',
+      // Rules are written for the default-locale path: /es/old finds shop.example.test/old ...
+      path: (request) => new URL(request.url).pathname.replace(/^\/(es|fr)(?=\/|$)/, '') || '/',
+      // ... and a same-site target lands in the visitor's language.
+      location: (location, request) => {
+        const locale = localeOf(request)
+        const url = new URL(location)
+        return locale && url.hostname === 'shop.example.test' ? `${url.origin}/${locale}${url.pathname}${url.search}` : location
+      },
+      fetch: p.fetch,
+      logger: null,
+    })
+    const es = await redirects.handle(new Request('https://shop.example.test/es/old'))
+    assert.equal(es?.headers.get('location'), 'https://shop.example.test/es/new')
+    const en = await redirects.handle(new Request('https://shop.example.test/old'))
+    assert.equal(en?.headers.get('location'), 'https://shop.example.test/new')
+    await redirects.flush()
+    assert.match(p.lines[0], / file=shop\.example\.test\/old destination=https:\/\/shop\.example\.test\/es\/new$/)
+  })
+
   it('fails open', async () => {
     assert.equal(await createRedirects({ rulesUrl: '' }).handle(new Request('https://shop.example.test/old')), null)
     const broken = createRedirects({ rulesUrl: RULES, fetch: async () => Promise.reject(new Error('down')), logger: null })

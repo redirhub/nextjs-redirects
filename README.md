@@ -89,8 +89,10 @@ export async function proxy(request: NextRequest, event: NextFetchEvent) {
 | --- | --- |
 | `rulesUrl` | The rules address. Empty: off, every request goes to the app. |
 | `key` | The integration key. Without it redirects work and nothing is reported. |
+| `report` | `false`, or `(request) => boolean`: whether to report, over the key. Default: whenever there is a key. |
 | `hostname(request)` | The hostname to look up in the rules; `null` leaves the request alone (no rules loaded, nothing reported). Default the `Host` header. |
-| `path(request)` | The path the visitor asked for, percent-encoded; `null` leaves the request alone. Default the request URL's path. |
+| `path(request)` | The path to look up in the rules, percent-encoded; `null` leaves the request alone. Default the request URL's path. |
+| `location(location, request)` | The `Location` to send, from the one the rule gives; also the reported destination. |
 | `clientIp(request)` | The visitor's address in reports; default the first `X-Forwarded-For` value. `null` writes `-`. |
 | `userAgent(request)` | The User-Agent in reports; default the `User-Agent` header. `null` writes `-`. |
 | `scheme(request)` | `http` or `https` as the visitor asked; default `X-Forwarded-Proto`, else the URL's. |
@@ -99,35 +101,41 @@ export async function proxy(request: NextRequest, event: NextFetchEvent) {
 
 ## Customize
 
-Each option that reads the request is a function of it, so a site decides with ordinary code:
+Each option that reads the request is a function of it, so a site decides with ordinary code. A
+multilingual site with preview deployments, whose rules are written once for the default-language
+path:
 
 ```ts
+const LOCALE = /^\/(de|es|fr)(?=\/|$)/ // the site's language prefixes; English has none
+
 const redirects = createProxy({
   rulesUrl: process.env.ACME_RULES_URL,
   key: process.env.ACME_INTEGRATION_KEY,
-  // Which hostname to look up in the rules. null: leave the request alone.
-  hostname: (request) => {
-    const host = request.headers.get('host')
-    if (host === 'www.example.com') return null // our own site never goes through the rules
-    if (host?.endsWith('.vercel.app')) return 'shop.example.com' // previews act as production
-    return host
-  },
-  // A proxy in front strips /shop; /api never goes through the rules.
+  // Previews redirect like production ...
+  hostname: () => 'www.example.com',
+  // ... but their test visits are not reported.
+  report: () => process.env.VERCEL_ENV === 'production',
+  // /es/old-page finds the rule for /old-page; /api never goes through the rules.
   path: (request) => {
     const { pathname } = new URL(request.url)
-    return pathname.startsWith('/api/') ? null : `${request.headers.get('x-forwarded-prefix') ?? ''}${pathname}`
+    return pathname.startsWith('/api/') ? null : pathname.replace(LOCALE, '') || '/'
   },
-  // Behind your own proxy: the headers it sets.
-  clientIp: (request) => request.headers.get('x-real-ip'),
-  userAgent: (request) => request.headers.get('x-original-user-agent') ?? request.headers.get('user-agent'),
-  anonymizeIp: true,
+  // A target on this site lands in the visitor's language: /es/new-page.
+  location: (location, request) => {
+    const locale = LOCALE.exec(new URL(request.url).pathname)?.[1]
+    const target = new URL(location)
+    if (!locale || target.hostname !== 'www.example.com') return location
+    target.pathname = `/${locale}${target.pathname}`
+    return target.toString()
+  },
 })
 ```
 
 The hostname and path these return are the ones matched, answered on the check path, appended by
 a catch-all and reported, so they always agree. Options that identify the request (`hostname`,
 `path`) leave it alone on `null`, and such a request costs nothing: the rules are not even loaded
-for it. Options that are only reported (`clientIp`, `userAgent`) write `-` on `null`.
+for it. Options that are only reported (`clientIp`, `userAgent`) write `-` on `null`; behind your
+own proxy, read them from the headers it sets (`x-real-ip`).
 
 ## Behaviour
 
