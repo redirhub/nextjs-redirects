@@ -24,8 +24,20 @@ export interface RedirectsOptions {
    * `rules` (default) for hostnames whose `@host` line has `report404`, `all` for every hostname.
    */
   report404?: 'rules' | 'all'
-  /** The visitor's address: only a value the platform sets, never a header a client can forge. */
+  /**
+   * The hostname to look up in the rules, report and answer the check path for. Return null to
+   * leave the request alone: no rules are loaded for it and nothing is reported. Default: the
+   * `Host` header (behind `next start` the request URL names the server, not the site), else the
+   * request URL's host. Any letter case and a port are fine.
+   */
+  hostname?: (request: Request) => string | null
+  /**
+   * The visitor's address in reports: only a value the platform sets, never a header a client can
+   * forge. Null writes `-`.
+   */
   clientIp?: (request: Request) => string | null
+  /** The User-Agent in reports. Default: the `User-Agent` header. Null writes `-`. */
+  userAgent?: (request: Request) => string | null
   /** `http` or `https` as the visitor asked; default the request URL's scheme. */
   scheme?: (request: Request) => string
   /** Report IPv4 addresses with the last byte zeroed and IPv6 addresses cut to /48. */
@@ -88,6 +100,13 @@ export function createRedirects(options: InternalOptions): Redirects {
     }
   }
 
+  /** The hostname of a request as listed in the rules (lowercase, no port), or null to leave it alone. */
+  const hostnameFor = (request: Request): string | null => {
+    const value = options.hostname ? options.hostname(request) : (request.headers.get('host') ?? new URL(request.url).host)
+    const name = value === null ? '' : normalizeHost(value)
+    return name === '' ? null : name
+  }
+
   const keepAliveOf = (context?: WaitUntil): KeepAlive | undefined => (context ? (work) => context.waitUntil(work) : undefined)
 
   const report = (request: Request, url: URL, host: string, status: number, size: number, keepAlive: KeepAlive | undefined, redirect?: { source: string; location: string }) => {
@@ -106,7 +125,7 @@ export function createRedirects(options: InternalOptions): Redirects {
           status,
           size,
           referer: request.headers.get('referer'),
-          userAgent: request.headers.get('user-agent'),
+          userAgent: options.userAgent ? options.userAgent(request) : request.headers.get('user-agent'),
           redirect,
         },
         now()
@@ -130,9 +149,14 @@ export function createRedirects(options: InternalOptions): Redirects {
       return null
     }
     try {
+      // Before the rules: a request the integration leaves alone never waits for them.
+      const name = hostnameFor(request)
+      if (name === null) {
+        return null
+      }
       const keepAlive = keepAliveOf(context)
       const rules = await source.get(keepAlive)
-      const host = rules?.hosts.get(hostnameOf(request))
+      const host = rules?.hosts.get(name)
       if (!rules || !host) {
         return null
       }
@@ -161,7 +185,10 @@ export function createRedirects(options: InternalOptions): Redirects {
       if (!rules) {
         return response
       }
-      const name = hostnameOf(request)
+      const name = hostnameFor(request)
+      if (name === null) {
+        return response
+      }
       const host = rules.hosts.get(name)
       const keepAlive = keepAliveOf(context)
       const url = new URL(request.url)
@@ -169,7 +196,7 @@ export function createRedirects(options: InternalOptions): Redirects {
         await response.body?.cancel()
         return redirect(request, url, rules, host, host.catchAll, keepAlive)
       }
-      if ((host?.report404 || options.report404 === 'all') && name !== '') {
+      if (host?.report404 || options.report404 === 'all') {
         report(request, url, name, 404, Number(response.headers.get('content-length') ?? 0) || 0, keepAlive)
       }
       return response
@@ -189,11 +216,6 @@ export function createRedirects(options: InternalOptions): Redirects {
       await reporter?.flush()
     },
   }
-}
-
-/** The request's hostname: the `Host` header (a self-hosted server's URL names itself), else the URL's. */
-function hostnameOf(request: Request): string {
-  return normalizeHost(request.headers.get('host') ?? new URL(request.url).host)
 }
 
 /** Header values carry bytes: a UTF-8 target is sent as its UTF-8 bytes, as other implementations do. */

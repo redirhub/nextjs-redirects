@@ -20,6 +20,22 @@ and this package passes its [golden sample](spec/v1). [RedirHub](https://www.red
 publishes the file for you: you manage the redirects in its dashboard, API or MCP server and see
 the redirects in its analytics.
 
+## For AI coding assistants
+
+To add this to a Next.js app:
+
+1. `npm install @redirhub/nextjs-redirects`.
+2. In `proxy.ts` (Next.js 16+) or `middleware.ts` (15 and earlier), call `createProxy(…)` once at
+   module scope and, first thing in the proxy function, `const response = await redirects(request, event)`;
+   return `response` when it is set. Keep the app's own proxy logic after it.
+3. Two server-side environment variables: the rules address and the integration key from the
+   RedirHub dashboard (names like `ACME_RULES_URL`, `ACME_INTEGRATION_KEY`; never `NEXT_PUBLIC_`).
+4. Make sure `config.matcher` reaches `/_redirhub/check` and the redirected paths.
+5. Check: `GET https://<hostname>/_redirhub/check` answers `token=… etag=…`, and a rule's path
+   redirects with its status. Then press **Check now** in the dashboard.
+
+Do not reimplement the rules format: this package passes the specification's golden sample.
+
 ## When to use it
 
 `redirects()` in `next.config` is the right tool for a handful of permanent rules that change with
@@ -73,10 +89,37 @@ export async function proxy(request: NextRequest, event: NextFetchEvent) {
 | --- | --- |
 | `rulesUrl` | The rules address. Empty: off, every request goes to the app. |
 | `key` | The integration key. Without it redirects work and nothing is reported. |
-| `clientIp(request)` | The visitor's address; default the first `X-Forwarded-For` value. |
+| `hostname(request)` | The hostname to look up in the rules; `null` leaves the request alone (no rules loaded, nothing reported). Default the `Host` header. |
+| `clientIp(request)` | The visitor's address in reports; default the first `X-Forwarded-For` value. `null` writes `-`. |
+| `userAgent(request)` | The User-Agent in reports; default the `User-Agent` header. `null` writes `-`. |
 | `scheme(request)` | `http` or `https` as the visitor asked; default `X-Forwarded-Proto`, else the URL's. |
 | `anonymizeIp` | Report IPv4 with the last byte zeroed, IPv6 cut to /48. |
 | `logger` | Default `console`; `null` for silence. Failures are logged at most once per ten minutes. |
+
+## Customize
+
+Each option that reads the request is a function of it, so a site decides with ordinary code:
+
+```ts
+const redirects = createProxy({
+  rulesUrl: process.env.ACME_RULES_URL,
+  key: process.env.ACME_INTEGRATION_KEY,
+  // Which hostname to look up in the rules. null: leave the request alone.
+  hostname: (request) => {
+    const host = request.headers.get('host')
+    if (host === 'www.example.com') return null // our own site never goes through the rules
+    if (host?.endsWith('.vercel.app')) return 'shop.example.com' // previews act as production
+    return host
+  },
+  // Behind your own proxy: the headers it sets.
+  clientIp: (request) => request.headers.get('x-real-ip'),
+  userAgent: (request) => request.headers.get('x-original-user-agent') ?? request.headers.get('user-agent'),
+  anonymizeIp: true,
+})
+```
+
+The hostname `hostname` returns is the one matched, answered on the check path and reported, so
+all three agree. A request it leaves alone costs nothing: the rules are not even loaded for it.
 
 ## Behaviour
 

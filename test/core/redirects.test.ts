@@ -67,6 +67,44 @@ describe('createRedirects', () => {
     assert.equal(p.lines.length, 1, 'reports go through the global fetch too')
   })
 
+  it('leaves a request alone, without loading the rules, when hostname returns null', async () => {
+    let downloads = 0
+    const redirects = createRedirects({
+      rulesUrl: RULES,
+      key: 'k',
+      hostname: (request) => (new URL(request.url).hostname === 'www.example.test' ? null : request.headers.get('host')),
+      fetch: async () => {
+        downloads++
+        return new Response(FILE)
+      },
+      logger: null,
+    })
+    const response = await redirects.serve(new Request('https://www.example.test/old'), async () => new Response('site', { status: 404 }))
+    assert.equal(await response.text(), 'site')
+    assert.equal(downloads, 0, 'our own site never waits for the rules')
+  })
+
+  it('matches, answers and reports the hostname that hostname returns, with the custom User-Agent', async () => {
+    const p = platform()
+    const redirects = createRedirects({
+      rulesUrl: RULES,
+      key: 'k',
+      hostname: (request) => (request.headers.get('host')?.endsWith('.vercel.app') ? 'Shop.Example.TEST:443' : request.headers.get('host')),
+      clientIp: () => null,
+      userAgent: (request) => request.headers.get('x-original-user-agent'),
+      fetch: p.fetch,
+      logger: null,
+    })
+    const headers = { host: 'shop-git-main.vercel.app', 'user-agent': 'proxy/1.0', 'x-original-user-agent': 'Visitor/2.0' }
+    const check = await redirects.handle(new Request('https://shop-git-main.vercel.app/_redirhub/check', { headers }))
+    assert.equal(await check?.text(), 'token=TOKEN etag=r1')
+    const response = await redirects.handle(new Request('https://shop-git-main.vercel.app/old', { headers }))
+    assert.equal(response?.headers.get('location'), 'https://shop.example.test/new')
+    await redirects.flush()
+    assert.equal(p.lines.length, 1)
+    assert.match(p.lines[0], /^- - - \[[^\]]+\] "GET https:\/\/shop\.example\.test\/old HTTP\/1\.1" 301 0 "-" "Visitor\/2\.0" file=/)
+  })
+
   it('fails open', async () => {
     assert.equal(await createRedirects({ rulesUrl: '' }).handle(new Request('https://shop.example.test/old')), null)
     const broken = createRedirects({ rulesUrl: RULES, fetch: async () => Promise.reject(new Error('down')), logger: null })
