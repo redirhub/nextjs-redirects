@@ -139,13 +139,15 @@ export class Reporter {
   #lastDropLog = Number.NEGATIVE_INFINITY
 
   constructor(options: ReporterOptions) {
+    // `??` per field, not a spread: an option passed as undefined keeps its default.
     this.#options = {
+      key: options.key,
+      hitsUrl: options.hitsUrl,
       fetch: options.fetch ?? ((input, init) => fetch(input, init)),
-      timeoutMs: 2000,
-      maxQueue: 10_000,
-      budgetMs: 10_000,
-      ...options,
       logger: options.logger,
+      timeoutMs: options.timeoutMs ?? 2000,
+      maxQueue: options.maxQueue ?? 10_000,
+      budgetMs: options.budgetMs ?? 10_000,
     }
   }
 

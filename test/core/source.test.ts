@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { afterEach, describe, it, mock } from 'node:test'
 
-import { RulesSource } from '../../src/index.ts'
+import { RulesSource } from '../../src/core/source.ts'
 
 const URL_ = 'https://rules.example.test/FAKE.txt'
 const FILE = '@format 1\n@refresh 60\n@host a.example.test check=T\na.example.test/x\thttps://b.example.test/\n'
@@ -66,6 +66,49 @@ describe('RulesSource', () => {
     later(offset + 1000)
     await source.get()
     assert.equal(calls, 4)
+  })
+
+  it('lets the first request wait at most firstWaitMs, and no other request wait at all', async () => {
+    let finish: (response: Response) => void = () => {}
+    let calls = 0
+    const source = new RulesSource({
+      url: URL_,
+      firstWaitMs: 20,
+      fetch: () => {
+        calls++
+        return new Promise<Response>((resolve) => (finish = resolve))
+      },
+    })
+    const kept: Array<Promise<unknown>> = []
+    const started = Date.now()
+    assert.equal(await source.get((p) => void kept.push(p)), null, 'a slow first download: the request goes on without rules')
+    assert.ok(Date.now() - started < 1000)
+    assert.equal(kept.length, 1, 'the request that started the download keeps it alive')
+
+    const others: Array<Promise<unknown>> = []
+    assert.equal(await source.get((p) => void others.push(p)), null, 'another request does not wait')
+    assert.equal(others.length, 0, 'and does not hold on to the running download')
+    assert.equal(calls, 1, 'one download at a time')
+
+    finish(new Response(FILE, { headers: { ETag: '"v1"' } }))
+    await Promise.all(kept)
+    assert.equal((await source.get())?.etag, 'v1')
+  })
+
+  it('clears a download that fails at once', async () => {
+    let calls = 0
+    const source = new RulesSource({
+      url: URL_,
+      retryMs: 0,
+      logger: { warn() {} },
+      fetch: () => {
+        calls++
+        throw new TypeError('sync failure')
+      },
+    })
+    await source.get()
+    await source.get()
+    assert.equal(calls, 2, 'a second download can start')
   })
 
   it('has no rules, without throwing, while the first download fails', async () => {

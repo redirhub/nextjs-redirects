@@ -30,11 +30,21 @@ export interface RedirectsOptions {
   scheme?: (request: Request) => string
   /** Report IPv4 addresses with the last byte zeroed and IPv6 addresses cut to /48. */
   anonymizeIp?: boolean
-  fetch?: typeof fetch
   /** Default `console`; null logs nothing. */
   logger?: Logger | null
+}
+
+/**
+ * What the platform entry and the tests set, and users do not: the platform entries export a
+ * `createRedirects` that takes RedirectsOptions only.
+ */
+export interface InternalOptions extends RedirectsOptions {
+  /** Next.js passes one that sets `cache: 'no-store'`; tests pass fakes. */
+  fetch?: typeof fetch
   /** The clock report lines are stamped with; tests fix it. */
   now?: () => Date
+  /** How long the request that starts the first rules download waits for it; default 1000. */
+  firstWaitMs?: number
 }
 
 /** What lets work outlive the response: Next's `event`, a Worker's `ctx`. */
@@ -61,10 +71,10 @@ export interface Redirects {
 
 const WARN_EVERY_MS = 10 * 60_000
 
-export function createRedirects(options: RedirectsOptions): Redirects {
+export function createRedirects(options: InternalOptions): Redirects {
   const logger = options.logger === undefined ? console : (options.logger ?? undefined)
   const rulesUrl = options.rulesUrl?.trim() ?? ''
-  const source = rulesUrl === '' ? null : new RulesSource({ url: rulesUrl, fetch: options.fetch, logger })
+  const source = rulesUrl === '' ? null : new RulesSource({ url: rulesUrl, fetch: options.fetch, firstWaitMs: options.firstWaitMs, logger })
   const key = options.key?.trim() ?? ''
   const reporter =
     source && key !== '' ? new Reporter({ key, hitsUrl: () => source.current?.hitsUrl ?? null, fetch: options.fetch, logger }) : null

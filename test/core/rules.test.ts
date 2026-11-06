@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { buildLocation, matchPath, normalizeHost, parseRules, type Rule, UnknownFormatError } from '../../src/index.ts'
+import { buildLocation, matchPath, normalizeHost, parseRules, type Rule, UnknownFormatError } from '../../src/core/rules.ts'
 
 const HEAD = '@format 1\n@host a.example.test check=T\n'
 

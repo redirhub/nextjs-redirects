@@ -8,7 +8,7 @@ import { readFileSync } from 'node:fs'
 import { gunzipSync } from 'node:zlib'
 import { describe, it } from 'node:test'
 
-import { createRedirects } from '../../src/index.ts'
+import { createRedirects } from '../../src/core/redirects.ts'
 
 const spec = (name: string) => readFileSync(new URL(`../../spec/v1/${name}`, import.meta.url), 'utf8')
 

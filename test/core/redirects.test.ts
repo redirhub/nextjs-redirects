@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { gunzipSync } from 'node:zlib'
 import { describe, it } from 'node:test'
 
-import { anonymize, createRedirects } from '../../src/index.ts'
+import { anonymize, createRedirects } from '../../src/core/redirects.ts'
 
 const RULES = 'https://rules.example.test/FAKE.txt'
 const FILE = [
@@ -50,6 +50,21 @@ describe('createRedirects', () => {
     await redirects.flush()
     assert.equal(p.lines.length, 1)
     assert.match(p.lines[0], /^2001:db8:1234:: .* 404 0 "-" "-"$/)
+  })
+
+  it('uses the global fetch and the defaults when no internal option is passed', async (t) => {
+    const original = globalThis.fetch
+    t.after(() => {
+      globalThis.fetch = original
+    })
+    const p = platform()
+    globalThis.fetch = p.fetch
+    const redirects = createRedirects({ rulesUrl: RULES, key: 'k', logger: null, fetch: undefined, firstWaitMs: undefined })
+    const check = await redirects.handle(new Request('https://shop.example.test/_redirhub/check'))
+    assert.equal(await check?.text(), 'token=TOKEN etag=r1')
+    await redirects.handle(new Request('https://shop.example.test/old'))
+    await redirects.flush()
+    assert.equal(p.lines.length, 1, 'reports go through the global fetch too')
   })
 
   it('fails open', async () => {

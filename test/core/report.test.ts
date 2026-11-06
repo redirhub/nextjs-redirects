@@ -2,7 +2,8 @@ import assert from 'node:assert/strict'
 import { gunzipSync } from 'node:zlib'
 import { describe, it } from 'node:test'
 
-import { hitLine, Reporter, USER_AGENT } from '../../src/index.ts'
+import { hitLine, Reporter } from '../../src/core/report.ts'
+import { USER_AGENT } from '../../src/version.ts'
 
 const HITS = 'https://edge.example.test/_edge/hits'
 

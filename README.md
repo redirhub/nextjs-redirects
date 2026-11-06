@@ -55,8 +55,8 @@ const redirects = createProxy({
 })
 
 export async function proxy(request: NextRequest, event: NextFetchEvent) {
-  const answer = await redirects(request, event)
-  if (answer) return answer
+  const response = await redirects(request, event)
+  if (response) return response
   // … your own proxy logic, or nothing
 }
 ```
@@ -98,10 +98,12 @@ answers 404: a hostname's catch-all rule (`{host}/*`) is not served and the app'
 reported. Where you do see the final answer, e.g. in a route handler, `createRedirects()` from this
 package gives you `afterSite(request, response, context)`, which adds both.
 
-**Rules download.** The first request of an instance downloads the file (5 second timeout) and
-waits for it; after that the copy in memory is used, and once it is older than `@refresh` seconds
-(60 by default) it is revalidated in the background (`event.waitUntil`) with `If-None-Match`, so
-no visitor waits. Any failure keeps the last good copy and waits 30 seconds before trying again.
+**Rules download.** The first request of a new instance starts the download and waits for it at
+most one second; if the rules server is slower, that request goes on without rules and the download
+(5 second timeout) finishes in the background. Requests that arrive meanwhile do not wait. After
+that the copy in memory is used, and once it is older than `@refresh` seconds (60 by default) it is
+revalidated in the background (`event.waitUntil`) with `If-None-Match`, so no visitor waits. Any
+failure keeps the last good copy and waits 30 seconds before trying again.
 
 **Reports.** A line queued while nothing is being sent goes out at once; lines queued while a
 request is out go together in the next one (at most 100 lines or 64 KB, gzip, 2 second timeout).
@@ -127,7 +129,8 @@ go only to the `@hits` address of your rules file, with your key.
 ## Limits
 
 - No catch-all and no 404 reports in the proxy (see above).
-- The rules live in each instance's memory: a new instance (a cold start) waits for one download.
+- The rules live in each instance's memory: a new instance (a cold start) waits up to one second
+  for them, and serves no redirects until they arrive.
 - Changes are live within `@refresh` seconds per instance (60 by default).
 - The rules file is at most 32 MB.
 
