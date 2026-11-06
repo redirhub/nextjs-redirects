@@ -1,8 +1,13 @@
-# nextjs-redirects
+# nextjs-redirects: bulk redirects for Next.js
 
-**Bulk redirects for [Next.js](https://nextjs.org), from a remote rules file.** Your domains keep
-pointing at your Next.js app; its proxy serves thousands of redirects from a rules file and
-reports every redirect back, without a deploy for each change.
+[![npm](https://img.shields.io/npm/v/@redirhub/nextjs-redirects)](https://www.npmjs.com/package/@redirhub/nextjs-redirects)
+[![CI](https://github.com/redirhub/nextjs-redirects/actions/workflows/ci.yml/badge.svg)](https://github.com/redirhub/nextjs-redirects/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+
+**Serve thousands of 301 and 302 redirects from your [Next.js](https://nextjs.org) app, from a
+remote rules file.** Your domains keep pointing at your Next.js app; its proxy (`proxy.ts`, or
+`middleware.ts` before Next.js 16) redirects old URLs, short links and whole website migrations,
+and reports every redirect back, without a deploy for each change.
 
 - Redirects, short links and whole website migrations, live within a minute, without touching
   `next.config` or redeploying.
@@ -14,6 +19,15 @@ The rules file format is open: [Integration Mode format v1](https://github.com/r
 and this package passes its [golden sample](spec/v1). [RedirHub](https://www.redirhub.com)
 publishes the file for you: you manage the redirects in its dashboard, API or MCP server and see
 the redirects in its analytics.
+
+## When to use it
+
+`redirects()` in `next.config` is the right tool for a handful of permanent rules that change with
+your code. This package is for redirect lists that change without a release: a website
+migration with thousands of old URLs, marketing and short links, redirects that people who do not
+touch the code maintain, the same rules across several Next.js apps, or when you want to see which
+redirects are still used. The rules change in a dashboard, API or MCP server, and every instance
+picks them up within a minute.
 
 ## Install
 

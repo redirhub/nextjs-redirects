@@ -1,20 +1,53 @@
 {
   "name": "@redirhub/nextjs-redirects",
   "version": "0.1.0",
-  "description": "Bulk redirects for Next.js from a remote rules file (RedirHub Integration Mode): exact redirects in proxy.ts, visit reports in the background.",
-  "keywords": ["redirects", "301", "seo", "404", "nextjs", "next.js", "proxy", "middleware", "vercel", "redirhub"],
+  "description": "Bulk redirects for Next.js from a remote rules file: thousands of 301/302 redirects, short links and website migrations in proxy.ts or middleware, live within a minute without a redeploy. Vercel and self-hosted. RedirHub Integration Mode.",
+  "keywords": [
+    "nextjs",
+    "next",
+    "next.js",
+    "nextjs-middleware",
+    "middleware",
+    "proxy",
+    "vercel",
+    "redirect",
+    "redirects",
+    "301",
+    "302",
+    "301-redirect",
+    "bulk-redirects",
+    "url-redirect",
+    "seo",
+    "website-migration",
+    "short-links",
+    "typescript",
+    "redirhub"
+  ],
   "license": "Apache-2.0",
   "author": "RedirHub",
   "homepage": "https://github.com/redirhub/nextjs-redirects#readme",
-  "repository": { "type": "git", "url": "git+https://github.com/redirhub/nextjs-redirects.git" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/redirhub/nextjs-redirects.git"
+  },
   "bugs": "https://github.com/redirhub/nextjs-redirects/issues",
   "type": "module",
   "sideEffects": false,
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" }
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
   },
-  "files": ["dist", "LICENSE", "NOTICE", "README.md"],
-  "engines": { "node": ">=20" },
+  "files": [
+    "dist",
+    "LICENSE",
+    "NOTICE",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "build": "rm -rf dist && tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
