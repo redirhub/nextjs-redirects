@@ -17,6 +17,9 @@ export const MAX_REFRESH = 3600
 
 export type RedirectStatus = 301 | 302 | 307 | 308
 
+/** A rule's status column: a redirect status, or `frame` (a page that shows the target in a frame). */
+export type RuleStatus = RedirectStatus | 'frame'
+
 const STATUSES: ReadonlySet<number> = new Set([301, 302, 307, 308])
 
 /** A rules file whose `@format` major version is not 1: the caller keeps its last good copy. */
@@ -28,7 +31,7 @@ export interface Rule {
   /** The source column as written; reports name the rule with it (`file=`). */
   source: string
   target: string
-  status: RedirectStatus
+  status: RuleStatus
   /** `p`: append the request path (catch-all only). */
   appendPath: boolean
   /** `q`: keep the request query string. */
@@ -56,7 +59,7 @@ export interface RuleSet {
   /** Where redirects and 404s are reported; null disables reporting. */
   hitsUrl: string | null
   checkPath: string
-  /** Sent as `X-Powered-By` on every redirect from the rules; null sends none. */
+  /** Sent as `X-Powered-By` on every redirect and frame page from the rules; null sends none. */
   poweredBy: string | null
   /** The `@notify` push channel. Parsed for completeness; this package polls. */
   notifyUrl: string | null
@@ -195,7 +198,9 @@ function parseRuleLine(line: string): { host: string; path: string | null; rule:
   const rule: Rule = { source, target, status: 301, appendPath: false, keepQuery: false }
 
   const status = columns[2]?.trim() ?? ''
-  if (status !== '') {
+  if (status === 'frame') {
+    rule.status = 'frame'
+  } else if (status !== '') {
     if (!/^[+-]?\d+$/.test(status) || !STATUSES.has(Number(status))) {
       return null
     }
@@ -317,9 +322,10 @@ export function matchExact(host: HostRules, url: URL): Rule | null {
 }
 
 /**
- * The `Location` of a rule for a request URL. With `appendPath` the escaped request path is
- * appended to the target's path without a double slash; with `keepQuery` the request query is
- * added with `?` or `&`, otherwise dropped. A fragment of the target stays last.
+ * The `Location` of a rule for a request URL, and a `frame` rule's iframe `src`. With `appendPath`
+ * the escaped request path is appended to the target's path without a double slash; with
+ * `keepQuery` the request query is added with `?` or `&`, otherwise dropped. A fragment of the
+ * target stays last.
  */
 export function buildLocation(rule: Rule, url: URL): string {
   const hash = rule.target.indexOf('#')
@@ -337,4 +343,31 @@ export function buildLocation(rule: Rule, url: URL): string {
     location += question < 0 ? `?${requestQuery}` : query === '' ? requestQuery : `&${requestQuery}`
   }
   return hash < 0 ? location : `${location}#${rule.target.slice(hash + 1)}`
+}
+
+/**
+ * The page of a `frame` rule: one full-window `<iframe>` showing `src`, titled with the target's
+ * hostname. Both are HTML-escaped.
+ */
+export function framePage(src: string, target: string): string {
+  return [
+    '<!DOCTYPE html>',
+    '<html>',
+    '<head>',
+    '<meta charset="utf-8">',
+    '<meta name="viewport" content="width=device-width, initial-scale=1">',
+    `<title>${escapeHtml(new URL(target).hostname)}</title>`,
+    '<style>html,body{margin:0;height:100%;overflow:hidden}iframe{display:block;width:100%;height:100%;border:0}</style>',
+    '</head>',
+    '<body>',
+    `<iframe src="${escapeHtml(src)}" allowfullscreen></iframe>`,
+    '</body>',
+    '</html>',
+    '',
+  ].join('\n')
+}
+
+/** `&`, `<`, `>`, `"` and `'` as character references. */
+export function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
 }

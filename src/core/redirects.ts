@@ -1,7 +1,8 @@
 /**
  * The integration on any runtime with the Fetch API (Request, Response, fetch): answers the check
  * path, redirects exact rules before the site, redirects a hostname's catch-all where the site
- * answers 404, and reports redirects and 404s. The platform entry (`src/index.ts`) only says
+ * answers 404, shows `frame` rules in a frame page instead of redirecting, and reports redirects,
+ * frame pages and 404s. The platform entry (`src/index.ts`) only says
  * where the visitor's address and the background work come from.
  *
  * `src/core/` is the same in every JavaScript implementation (nextjs-redirects,
@@ -10,7 +11,7 @@
 
 import type { Logger } from './log.ts'
 import { hitLine, type KeepAlive, Reporter } from './report.ts'
-import { buildLocation, type HostRules, matchExact, normalizeHost, type Rule, type RuleSet } from './rules.ts'
+import { buildLocation, framePage, type HostRules, matchExact, normalizeHost, type Rule, type RuleSet } from './rules.ts'
 import { RulesSource } from './source.ts'
 import { PACKAGE } from '../version.ts'
 
@@ -160,14 +161,23 @@ export function createRedirects(options: InternalOptions): Redirects {
     )
   }
 
+  /** A rule's answer: its redirect, or for a `frame` rule a `200` page framing the same address. */
   const redirect = (request: Request, url: URL, rules: RuleSet, host: HostRules, rule: Rule, keepAlive: KeepAlive | undefined): Response => {
     const target = buildLocation(rule, url)
     const location = options.location ? options.location(target, request) : target
-    const headers = new Headers({ Location: byteString(location) })
+    const headers = new Headers()
     if (rules.poweredBy) {
       headers.set('X-Powered-By', rules.poweredBy)
     }
-    report(request, url, host.name, rule.status, 0, keepAlive, { source: rule.source, location })
+    // A frame page is reported like a redirect, with status 200 and size 0 as the format says.
+    report(request, url, host.name, rule.status === 'frame' ? 200 : rule.status, 0, keepAlive, { source: rule.source, location })
+    if (rule.status === 'frame') {
+      const page = framePage(location, rule.target)
+      headers.set('Content-Type', 'text/html; charset=utf-8')
+      headers.set('Content-Length', String(new TextEncoder().encode(page).length))
+      return new Response(request.method === 'HEAD' ? null : page, { status: 200, headers })
+    }
+    headers.set('Location', byteString(location))
     return new Response(null, { status: rule.status, headers })
   }
 

@@ -1,6 +1,6 @@
 /**
- * Visit reports to the rules file's `@hits` address: one Apache combined line per redirect or
- * 404, as specified in redirhub/integration-spec (spec/v1/reports.txt is the golden sample).
+ * Visit reports to the rules file's `@hits` address: one Apache combined line per redirect, frame
+ * page or 404, as specified in redirhub/integration-spec (spec/v1/reports.txt is the golden sample).
  */
 
 import type { Logger } from './log.ts'
@@ -22,11 +22,11 @@ export interface Hit {
   /** The request URL; its escaped path and query are the request target. */
   url: URL
   status: number
-  /** Body bytes sent: 0 for a redirect. */
+  /** Body bytes sent: 0 for a redirect and a frame page. */
   size: number
   referer: string | null
   userAgent: string | null
-  /** For a redirect: the rule's source column and the `Location` sent. */
+  /** For a redirect or frame page: the rule's source column and the `Location` sent, or the frame's `src`. */
   redirect?: { source: string; location: string }
 }
 

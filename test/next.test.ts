@@ -10,6 +10,7 @@ const FILE = [
   '@hits https://edge.example.test/_edge/hits',
   '@host shop.example.test check=TOKEN report404',
   'shop.example.test/old\thttps://shop.example.test/new',
+  'shop.example.test/tour\thttps://tour.example.test/\tframe',
   'shop.example.test/*\thttps://www.example.test/\t302\tp',
   '',
 ].join('\n')
@@ -56,6 +57,19 @@ describe('createProxy', () => {
     assert.equal((inits[0] as RequestInit & { cache?: string }).cache, 'no-store', 'the rules bypass the Next.js fetch cache')
     assert.equal(lines.length, 1)
     assert.match(lines[0], /^198\.51\.100\.7 - - \[[^\]]+\] "GET https:\/\/shop\.example\.test\/old HTTP\/1\.1" 301 0 /)
+  })
+
+  it('answers a frame rule with an HTML page of its own, and reports it with status 200', async () => {
+    const proxy = createProxy({ rulesUrl: RULES, key: 'k', logger: null })
+    const event = context()
+    const response = await proxy(new Request('https://shop.example.test/tour?ref=nl'), event)
+    assert.ok(response instanceof Response)
+    assert.equal(response.status, 200)
+    assert.equal(response.headers.get('content-type'), 'text/html; charset=utf-8')
+    assert.match(await response.text(), /<iframe src="https:\/\/tour\.example\.test\/" allowfullscreen>/)
+    await event.done()
+    assert.equal(lines.length, 1)
+    assert.match(lines[0], /" 200 0 "-" "-" file=shop\.example\.test\/tour destination=https:\/\/tour\.example\.test\/$/)
   })
 
   it('takes the scheme from X-Forwarded-Proto only when it is http or https', async () => {

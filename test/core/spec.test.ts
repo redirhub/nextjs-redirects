@@ -15,6 +15,15 @@ const spec = (name: string) => readFileSync(new URL(`../../spec/v1/${name}`, imp
 const RULES_URL = 'https://rules.example.test/FAKE.txt'
 const SPEC_TIME = new Date(Date.UTC(2026, 9, 31, 19, 10, 0))
 
+const NAMED: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" }
+
+/** An HTML attribute value back to its text: numeric references and the five named ones. */
+function unescapeHtml(value: string): string {
+  return value.replace(/&(?:#(\d+)|#x([0-9a-f]+)|(amp|lt|gt|quot|apos));/gi, (_, dec, hex, name) =>
+    dec ? String.fromCodePoint(Number(dec)) : hex ? String.fromCodePoint(parseInt(hex, 16)) : NAMED[name.toLowerCase()]
+  )
+}
+
 interface Case {
   name: string
   method: string
@@ -22,7 +31,7 @@ interface Case {
   referer: string | null
   userAgent: string | null
   site: number
-  outcome: 'redirect' | 'site' | 'check'
+  outcome: 'redirect' | 'frame' | 'site' | 'check'
   status: number
   location: string | null
   body: string | null
@@ -91,7 +100,17 @@ describe('spec v1 golden sample', () => {
 
       assert.equal(response.status, c.status, c.name)
       assert.equal(response.headers.get('location'), c.location, c.name)
-      assert.equal(response.headers.get('x-powered-by'), c.outcome === 'redirect' ? 'RedirHub (integrated)' : null, c.name)
+      const fromRule = c.outcome === 'redirect' || c.outcome === 'frame'
+      assert.equal(response.headers.get('x-powered-by'), fromRule ? 'RedirHub (integrated)' : null, c.name)
+      if (c.outcome === 'frame') {
+        assert.ok(c.body?.startsWith('src='), c.name)
+        assert.equal(response.headers.get('content-type'), 'text/html; charset=utf-8', c.name)
+        const page = await response.text()
+        const iframes = [...page.matchAll(/<iframe\b[^>]*>/gi)]
+        assert.equal(iframes.length, 1, `${c.name}: exactly one iframe`)
+        const src = /\ssrc="([^"]*)"/i.exec(iframes[0][0])?.[1]
+        assert.equal(src === undefined ? undefined : unescapeHtml(src), c.body?.slice('src='.length), c.name)
+      }
       if (c.outcome === 'check') {
         assert.equal(await response.text(), c.body, c.name)
         assert.equal(response.headers.get('cache-control'), 'no-store', c.name)
