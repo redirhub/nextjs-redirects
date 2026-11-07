@@ -41,6 +41,7 @@ describe('parseRules', () => {
         'a.example.test/sp ace\thttps://b.example.test/',
         'a.example.test/relative\t/elsewhere',
         'a.example.test/teapot\thttps://b.example.test/\t418',
+        'a.example.test/framed\thttps://b.example.test/\tFRAME',
         'a.example.test/only-source',
         'a.example.test/q?ignored=1\thttps://b.example.test/q\t\t\tk=v\textra',
       ].join('\n')
@@ -48,13 +49,11 @@ describe('parseRules', () => {
     assert.deepEqual([...rules.hosts.get('a.example.test')!.exact.keys()], ['/q'])
   })
 
-  it('reads the frame status and ignores the options', () => {
-    const host = parseRules(
-      `${HEAD}a.example.test/f\thttps://b.example.test/\tframe\na.example.test/o\thttps://b.example.test/\t302\t\tpassword=x destinations=https://c.example.test/ routing=random plugins=nobot\na.example.test/F\thttps://b.example.test/\tFrame\n`
-    ).hosts.get('a.example.test')!
-    assert.equal(host.exact.get('/f')?.status, 'frame')
-    assert.equal(host.exact.get('/o')?.status, 302)
-    assert.equal(host.exact.has('/F'), false, 'the status is case-sensitive')
+  it('reads the frame status, with flags, exact and catch-all', () => {
+    const host = parseRules(`${HEAD}a.example.test/tour\thttps://b.example.test/\tframe\na.example.test/*\thttps://b.example.test/\tframe\tpq\n`).hosts.get('a.example.test')!
+    assert.equal(host.exact.get('/tour')?.status, 'frame')
+    assert.equal(host.catchAll?.status, 'frame')
+    assert.equal(host.catchAll?.appendPath, true)
   })
 
   it('keeps p for the catch-all only', () => {
@@ -93,13 +92,13 @@ describe('matching', () => {
 })
 
 describe('framePage', () => {
-  it('holds one full-window iframe and the hostname as title, both escaped', () => {
-    const page = framePage('https://b.example.test/x?a=1&b=\'2\'')
-    assert.match(page, /^<!DOCTYPE html>\n/)
+  it('frames the src in one full-window iframe titled with the target hostname, both escaped', () => {
+    const page = framePage('https://b.example.test/?a=1&b="<x>\'', 'https://B.Example.test/?v=1')
+    assert.equal(page.match(/<iframe\b/g)?.length, 1)
+    assert.match(page, /<iframe src="https:\/\/b\.example\.test\/\?a=1&#38;b=&#34;&#60;x&#62;&#39;" allowfullscreen><\/iframe>/)
     assert.match(page, /<title>b\.example\.test<\/title>/)
-    assert.match(page, /<iframe src="https:\/\/b\.example\.test\/x\?a=1&#38;b=&#39;2&#39;" allowfullscreen><\/iframe>/)
-    assert.equal(page.match(/<iframe/g)?.length, 1)
-    assert.equal(escapeHtml(`<a href="x">&'</a>`), '&#60;a href=&#34;x&#34;&#62;&#38;&#39;&#60;/a&#62;')
-    assert.match(framePage('not a url'), /<title><\/title>/)
+    assert.match(page, /<meta charset="utf-8">/)
+    assert.match(page, /<meta name="viewport"/)
+    assert.equal(escapeHtml(`&<>"'x`), '&#38;&#60;&#62;&#34;&#39;x')
   })
 })

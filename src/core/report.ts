@@ -26,7 +26,7 @@ export interface Hit {
   size: number
   referer: string | null
   userAgent: string | null
-  /** For a redirect or frame page: the rule's source column and the `Location` sent (the frame's src). */
+  /** For a redirect or frame page: the rule's source column and the `Location` sent, or the frame's `src`. */
   redirect?: { source: string; location: string }
 }
 

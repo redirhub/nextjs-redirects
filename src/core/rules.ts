@@ -17,7 +17,7 @@ export const MAX_REFRESH = 3600
 
 export type RedirectStatus = 301 | 302 | 307 | 308
 
-/** A rule's status column: a redirect status, or `frame` (the target shown in a frame page). */
+/** A rule's status column: a redirect status, or `frame` (a page that shows the target in a frame). */
 export type RuleStatus = RedirectStatus | 'frame'
 
 const STATUSES: ReadonlySet<number> = new Set([301, 302, 307, 308])
@@ -206,8 +206,6 @@ function parseRuleLine(line: string): { host: string; path: string | null; rule:
     }
     rule.status = Number(status) as RedirectStatus
   }
-  // The options column (password=, destinations=, routing=, plugins=, …) is may-ignore: this
-  // client carries none of them out, so the rule answers as if they were absent.
   for (const flag of columns[3]?.trim() ?? '') {
     if (flag === 'p') {
       rule.appendPath = true
@@ -324,9 +322,10 @@ export function matchExact(host: HostRules, url: URL): Rule | null {
 }
 
 /**
- * The `Location` of a rule for a request URL. With `appendPath` the escaped request path is
- * appended to the target's path without a double slash; with `keepQuery` the request query is
- * added with `?` or `&`, otherwise dropped. A fragment of the target stays last.
+ * The `Location` of a rule for a request URL, and a `frame` rule's iframe `src`. With `appendPath`
+ * the escaped request path is appended to the target's path without a double slash; with
+ * `keepQuery` the request query is added with `?` or `&`, otherwise dropped. A fragment of the
+ * target stays last.
  */
 export function buildLocation(rule: Rule, url: URL): string {
   const hash = rule.target.indexOf('#')
@@ -347,33 +346,28 @@ export function buildLocation(rule: Rule, url: URL): string {
 }
 
 /**
- * The page a `frame` rule answers with: one full-window `<iframe>` showing `src` (the Location the
- * rule would redirect to), titled with its hostname. Both are HTML-escaped.
+ * The page of a `frame` rule: one full-window `<iframe>` showing `src`, titled with the target's
+ * hostname. Both are HTML-escaped.
  */
-export function framePage(src: string): string {
-  let title = ''
-  try {
-    title = new URL(src).hostname
-  } catch {
-    // A Location changed by the caller into something that is not a URL: no title.
-  }
-  return (
-    '<!DOCTYPE html>\n' +
-    '<html>\n' +
-    '<head>\n' +
-    '<meta charset="utf-8">\n' +
-    '<meta name="viewport" content="width=device-width, initial-scale=1">\n' +
-    `<title>${escapeHtml(title)}</title>\n` +
-    '<style>html,body{margin:0;height:100%;overflow:hidden}iframe{display:block;width:100%;height:100%;border:0}</style>\n' +
-    '</head>\n' +
-    '<body>\n' +
-    `<iframe src="${escapeHtml(src)}" allowfullscreen></iframe>\n` +
-    '</body>\n' +
-    '</html>\n'
-  )
+export function framePage(src: string, target: string): string {
+  return [
+    '<!DOCTYPE html>',
+    '<html>',
+    '<head>',
+    '<meta charset="utf-8">',
+    '<meta name="viewport" content="width=device-width, initial-scale=1">',
+    `<title>${escapeHtml(new URL(target).hostname)}</title>`,
+    '<style>html,body{margin:0;height:100%;overflow:hidden}iframe{display:block;width:100%;height:100%;border:0}</style>',
+    '</head>',
+    '<body>',
+    `<iframe src="${escapeHtml(src)}" allowfullscreen></iframe>`,
+    '</body>',
+    '</html>',
+    '',
+  ].join('\n')
 }
 
-/** `&`, `<`, `>`, `"` and `'` as character references: safe in text and in a quoted attribute. */
+/** `&`, `<`, `>`, `"` and `'` as character references. */
 export function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
 }
