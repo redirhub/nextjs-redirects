@@ -182,6 +182,49 @@ describe('createRedirects', () => {
     assert.match(p.lines[0], / file=shop\.example\.test\/old destination=https:\/\/shop\.example\.test\/es\/new$/)
   })
 
+  it('answers a frame rule with an escaped frame page, also as a catch-all, and HEAD without a body', async () => {
+    const p = platform()
+    const file = `${FILE.replace(/^shop.*\*.*$/m, '')}@powered-by Test\nshop.example.test/tour\thttps://tour.example.test/a?x=1&y="2"\tframe\tq\tpassword=$2y$10$FAKE plugins=nobot\n`
+    const redirects = createRedirects({
+      rulesUrl: RULES,
+      key: 'k',
+      fetch: async (input, init) => (String(input) === RULES ? new Response(file) : p.fetch(input, init)),
+      logger: null,
+    })
+    const response = await redirects.handle(new Request('https://shop.example.test/tour?ref=<b>'))
+    assert.equal(response?.status, 200)
+    assert.equal(response?.headers.get('location'), null)
+    assert.equal(response?.headers.get('content-type'), 'text/html; charset=utf-8')
+    assert.equal(response?.headers.get('x-powered-by'), 'Test')
+    const html = (await response?.text()) ?? ''
+    assert.equal(response?.headers.get('content-length'), String(new TextEncoder().encode(html).length))
+    assert.match(html, /<title>tour\.example\.test<\/title>/)
+    assert.match(html, /<meta charset="utf-8">/)
+    assert.deepEqual(
+      [...html.matchAll(/<iframe [^>]*>/g)].map((m) => m[0]),
+      ['<iframe src="https://tour.example.test/a?x=1&#38;y=&#34;2&#34;&#38;ref=%3Cb%3E" allowfullscreen>'],
+      'one iframe, its src escaped, the options ignored'
+    )
+
+    const head = await redirects.handle(new Request('https://shop.example.test/tour', { method: 'HEAD' }))
+    assert.equal(head?.status, 200)
+    assert.equal(head?.headers.get('content-type'), 'text/html; charset=utf-8')
+    assert.equal(await head?.text(), '')
+
+    const catchAll = createRedirects({
+      rulesUrl: RULES,
+      fetch: async () => new Response(FILE.replace('\t302\tp', '\tframe\tp')),
+      logger: null,
+    })
+    const framed = await catchAll.serve(new Request('https://shop.example.test/gone'), async () => new Response(null, { status: 404 }))
+    assert.equal(framed.status, 200)
+    assert.match(await framed.text(), /<iframe src="https:\/\/www\.example\.test\/gone"/)
+
+    await redirects.flush()
+    assert.equal(p.lines.length, 2)
+    assert.match(p.lines[0], /" 200 0 "-" "-" file=shop\.example\.test\/tour destination=https:\/\/tour\.example\.test\/a\?x=1&y=%222%22&ref=%3Cb%3E$/)
+  })
+
   it('fails open', async () => {
     assert.equal(await createRedirects({ rulesUrl: '' }).handle(new Request('https://shop.example.test/old')), null)
     const broken = createRedirects({ rulesUrl: RULES, fetch: async () => Promise.reject(new Error('down')), logger: null })

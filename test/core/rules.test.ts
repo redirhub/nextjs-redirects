@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { buildLocation, matchPath, normalizeHost, parseRules, type Rule, UnknownFormatError } from '../../src/core/rules.ts'
+import { buildLocation, escapeHtml, framePage, matchPath, normalizeHost, parseRules, type Rule, UnknownFormatError } from '../../src/core/rules.ts'
 
 const HEAD = '@format 1\n@host a.example.test check=T\n'
 
@@ -48,6 +48,15 @@ describe('parseRules', () => {
     assert.deepEqual([...rules.hosts.get('a.example.test')!.exact.keys()], ['/q'])
   })
 
+  it('reads the frame status and ignores the options', () => {
+    const host = parseRules(
+      `${HEAD}a.example.test/f\thttps://b.example.test/\tframe\na.example.test/o\thttps://b.example.test/\t302\t\tpassword=x destinations=https://c.example.test/ routing=random plugins=nobot\na.example.test/F\thttps://b.example.test/\tFrame\n`
+    ).hosts.get('a.example.test')!
+    assert.equal(host.exact.get('/f')?.status, 'frame')
+    assert.equal(host.exact.get('/o')?.status, 302)
+    assert.equal(host.exact.has('/F'), false, 'the status is case-sensitive')
+  })
+
   it('keeps p for the catch-all only', () => {
     const host = parseRules(`${HEAD}a.example.test/*\thttps://b.example.test/\t301\tpq\na.example.test/x\thttps://b.example.test/\t301\tp\n`).hosts.get('a.example.test')!
     assert.equal(host.catchAll?.appendPath, true)
@@ -80,5 +89,17 @@ describe('matching', () => {
     assert.equal(buildLocation(rule('https://b.example.test/base?', 'q'), url), 'https://b.example.test/base?k=1')
     assert.equal(buildLocation(rule('https://b.example.test/base?v=2#top', 'q'), url), 'https://b.example.test/base?v=2&k=1#top')
     assert.equal(buildLocation(rule('https://b.example.test/base#', 'p'), url), 'https://b.example.test/base/x/y#')
+  })
+})
+
+describe('framePage', () => {
+  it('holds one full-window iframe and the hostname as title, both escaped', () => {
+    const page = framePage('https://b.example.test/x?a=1&b=\'2\'')
+    assert.match(page, /^<!DOCTYPE html>\n/)
+    assert.match(page, /<title>b\.example\.test<\/title>/)
+    assert.match(page, /<iframe src="https:\/\/b\.example\.test\/x\?a=1&#38;b=&#39;2&#39;" allowfullscreen><\/iframe>/)
+    assert.equal(page.match(/<iframe/g)?.length, 1)
+    assert.equal(escapeHtml(`<a href="x">&'</a>`), '&#60;a href=&#34;x&#34;&#62;&#38;&#39;&#60;/a&#62;')
+    assert.match(framePage('not a url'), /<title><\/title>/)
   })
 })

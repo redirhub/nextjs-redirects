@@ -1,6 +1,6 @@
 /**
- * Next.js (`proxy.ts` in Next 16+, `middleware.ts` before): the check path and exact rules,
- * before the app's own routes.
+ * Next.js (`proxy.ts` in Next 16+, `middleware.ts` before): the check path, exact rules and frame
+ * pages, before the app's own routes.
  *
  * The proxy never sees a page's final status, so there is no catch-all and no 404 report here;
  * where your app does see the final answer (a route handler), `createRedirects(…).afterSite` adds

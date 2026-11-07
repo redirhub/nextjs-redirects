@@ -17,6 +17,9 @@ export const MAX_REFRESH = 3600
 
 export type RedirectStatus = 301 | 302 | 307 | 308
 
+/** A rule's status column: a redirect status, or `frame` (the target shown in a frame page). */
+export type RuleStatus = RedirectStatus | 'frame'
+
 const STATUSES: ReadonlySet<number> = new Set([301, 302, 307, 308])
 
 /** A rules file whose `@format` major version is not 1: the caller keeps its last good copy. */
@@ -28,7 +31,7 @@ export interface Rule {
   /** The source column as written; reports name the rule with it (`file=`). */
   source: string
   target: string
-  status: RedirectStatus
+  status: RuleStatus
   /** `p`: append the request path (catch-all only). */
   appendPath: boolean
   /** `q`: keep the request query string. */
@@ -56,7 +59,7 @@ export interface RuleSet {
   /** Where redirects and 404s are reported; null disables reporting. */
   hitsUrl: string | null
   checkPath: string
-  /** Sent as `X-Powered-By` on every redirect from the rules; null sends none. */
+  /** Sent as `X-Powered-By` on every redirect and frame page from the rules; null sends none. */
   poweredBy: string | null
   /** The `@notify` push channel. Parsed for completeness; this package polls. */
   notifyUrl: string | null
@@ -195,12 +198,16 @@ function parseRuleLine(line: string): { host: string; path: string | null; rule:
   const rule: Rule = { source, target, status: 301, appendPath: false, keepQuery: false }
 
   const status = columns[2]?.trim() ?? ''
-  if (status !== '') {
+  if (status === 'frame') {
+    rule.status = 'frame'
+  } else if (status !== '') {
     if (!/^[+-]?\d+$/.test(status) || !STATUSES.has(Number(status))) {
       return null
     }
     rule.status = Number(status) as RedirectStatus
   }
+  // The options column (password=, destinations=, routing=, plugins=, …) is may-ignore: this
+  // client carries none of them out, so the rule answers as if they were absent.
   for (const flag of columns[3]?.trim() ?? '') {
     if (flag === 'p') {
       rule.appendPath = true
@@ -337,4 +344,36 @@ export function buildLocation(rule: Rule, url: URL): string {
     location += question < 0 ? `?${requestQuery}` : query === '' ? requestQuery : `&${requestQuery}`
   }
   return hash < 0 ? location : `${location}#${rule.target.slice(hash + 1)}`
+}
+
+/**
+ * The page a `frame` rule answers with: one full-window `<iframe>` showing `src` (the Location the
+ * rule would redirect to), titled with its hostname. Both are HTML-escaped.
+ */
+export function framePage(src: string): string {
+  let title = ''
+  try {
+    title = new URL(src).hostname
+  } catch {
+    // A Location changed by the caller into something that is not a URL: no title.
+  }
+  return (
+    '<!DOCTYPE html>\n' +
+    '<html>\n' +
+    '<head>\n' +
+    '<meta charset="utf-8">\n' +
+    '<meta name="viewport" content="width=device-width, initial-scale=1">\n' +
+    `<title>${escapeHtml(title)}</title>\n` +
+    '<style>html,body{margin:0;height:100%;overflow:hidden}iframe{display:block;width:100%;height:100%;border:0}</style>\n' +
+    '</head>\n' +
+    '<body>\n' +
+    `<iframe src="${escapeHtml(src)}" allowfullscreen></iframe>\n` +
+    '</body>\n' +
+    '</html>\n'
+  )
+}
+
+/** `&`, `<`, `>`, `"` and `'` as character references: safe in text and in a quoted attribute. */
+export function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
 }

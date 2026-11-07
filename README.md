@@ -10,7 +10,7 @@ remote rules file.** Your domains keep pointing at your Next.js app; its proxy (
 and reports every redirect back, without a deploy for each change.
 
 - Redirects, short links and whole website migrations, live within a minute, without touching
-  `next.config` or redeploying.
+  `next.config` or redeploying. Frame links show their target in a full-window frame instead.
 - Fails open: no rules yet, a download error or a bug never breaks a page; the request goes on.
 - Reports go out in the background, batched, without delaying a response and without a timer.
 - No dependencies; works on Vercel and self-hosted (`next start`).
@@ -146,14 +146,23 @@ Only **GET and HEAD** on a **hostname listed** in the rules are answered; everyt
    tells RedirHub which rules you serve.
 2. **Exact rules** redirect before the app, even when the page exists, with the rule's status
    (301, 302, 307 or 308).
-3. Everything else goes to the app.
+3. **Frame rules** (status `frame`) answer like a redirect, but with `200`,
+   `Content-Type: text/html; charset=utf-8` and a small page of their own: one full-window
+   `<iframe>` whose `src` is the `Location` the rule would redirect to (flags and `location`
+   applied), titled with the target's hostname. The address bar keeps the visitor's URL. A
+   `HEAD` gets the same status and headers without the page. Next.js sends the `Response` from
+   the proxy as it is.
+4. Everything else goes to the app.
+
+The options column of a rule (`password=`, `destinations=` with `routing=`, `plugins=`) is not
+carried out here: such a rule redirects (or shows its frame) to its target, as the format allows.
 
 The hostname is taken from the `Host` header (self-hosted, the request URL names the server).
 Matching follows format v1: the hostname in any case, port ignored; the path case-sensitive,
 percent-decoded, leading and trailing slashes ignored; scheme and query ignored.
 
 **No catch-all, no 404 reports.** The proxy runs before the page, so it never sees whether the app
-answers 404: a hostname's catch-all rule (`{host}/*`) is not served and the app's 404s are not
+answers 404: a hostname's catch-all rule (`{host}/*`, a redirect or a frame) is not served and the app's 404s are not
 reported. Where you do see the final answer, e.g. in a route handler, `createRedirects()` from this
 package gives you `afterSite(request, response, context)`, which adds both.
 
@@ -183,9 +192,9 @@ Each report is one Apache combined line with the absolute URL:
 
 That is the visitor's IP address (or `-`, or anonymized with `anonymizeIp`), the time (UTC), the
 method, the requested URL with its query string, the status, the Referer and the User-Agent (each
-cut to 1 KB), the rule's source and the `Location` sent. The protocol is always written
-`HTTP/1.1`. No cookies, other headers or bodies are sent, and only redirects are reported. Reports
-go only to the `@hits` address of your rules file, with your key.
+cut to 1 KB), the rule's source and the `Location` sent (for a frame page, reported with status
+`200`, its `src`). The protocol is always written `HTTP/1.1`. No cookies, other headers or bodies
+are sent, and only redirects and frame pages are reported. Reports go only to the `@hits` address of your rules file, with your key.
 
 ## Limits
 
