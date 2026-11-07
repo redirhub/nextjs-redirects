@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { gunzipSync } from 'node:zlib'
-import { describe, it } from 'node:test'
+import { describe, it, mock } from 'node:test'
 
 import { hitLine, Reporter } from '../../src/core/report.ts'
 import { USER_AGENT } from '../../src/version.ts'
@@ -37,6 +37,11 @@ const keep = () => {
 }
 
 const tick = () => new Promise((resolve) => setImmediate(resolve))
+
+/** Waits until cond holds (gzip runs before each request), at most a second. */
+async function until(cond: () => boolean): Promise<void> {
+  for (let n = 0; n < 200 && !cond(); n++) await new Promise((resolve) => setTimeout(resolve, 5))
+}
 
 describe('Reporter', () => {
   it('sends a lone line at once, with the key, gzip and its User-Agent', async () => {
@@ -79,6 +84,84 @@ describe('Reporter', () => {
     for (let n = 0; n < 3; n++) reporter.enqueue(big)
     await reporter.flush()
     assert.deepEqual(hits.batches.map((b) => b.length), [1, 1, 1])
+  })
+
+  it('opens up to four requests at once for full batches, and the sender waits for all of them', async () => {
+    let out = 0
+    let most = 0
+    const batches: number[] = []
+    const waiting: Array<() => void> = []
+    const fetch: typeof globalThis.fetch = async (_url, init) => {
+      batches.push(gunzipSync(Buffer.from(init?.body as ArrayBuffer)).toString('utf8').split('\n').filter(Boolean).length)
+      out++
+      most = Math.max(most, out)
+      await new Promise<void>((resolve) => waiting.push(resolve))
+      out--
+      return new Response(null, { status: 204 })
+    }
+    const reporter = new Reporter({ key: 'k', hitsUrl: () => HITS, fetch })
+    const sender = keep()
+    reporter.enqueue('first', sender.keepAlive)
+    await until(() => out === 1)
+    assert.equal(out, 1, 'a lone line goes at once')
+
+    const others = keep()
+    for (let n = 0; n < 450; n++) reporter.enqueue(`line ${n}`, others.keepAlive)
+    await until(() => out === 4)
+    await tick()
+    assert.equal(most, 4, 'full batches open more requests, up to four')
+    assert.equal(others.work.length, 0, 'only the sender is kept alive')
+
+    let settled = false
+    void Promise.all(sender.work).then(() => (settled = true))
+    for (let n = 0; n < 200 && batches.reduce((sum, b) => sum + b, 0) < 451; n++) {
+      for (const resolve of waiting.splice(0)) resolve()
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+    for (const resolve of waiting.splice(0)) resolve()
+    await Promise.all(sender.work)
+    assert.ok(settled, 'the sender is done once every request is back')
+    assert.equal(batches.reduce((sum, n) => sum + n, 0), 451, 'every line sent once')
+    assert.ok(batches.every((n) => n <= 100))
+  })
+
+  it('waits for the request out with a part batch, instead of sending tiny ones', async () => {
+    const hits = endpoint()
+    hits.hold()
+    const reporter = new Reporter({ key: 'k', hitsUrl: () => HITS, fetch: hits.fetch })
+    reporter.enqueue('a')
+    await until(() => hits.batches.length === 1)
+    for (const line of ['b', 'c']) reporter.enqueue(line)
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    assert.equal(hits.batches.length, 1, 'b and c wait: less than a full batch')
+    hits.release()
+    await reporter.flush()
+    assert.deepEqual(hits.batches, [['a'], ['b', 'c']])
+  })
+
+  it('logs dropped lines at once, then the total by reason at most every ten minutes, even after the drops stop', async () => {
+    const warnings: string[] = []
+    const logger = { warn: (m: string) => void warnings.push(m) }
+    const reporter = new Reporter({ key: 'k', hitsUrl: () => HITS, fetch: async () => new Response(null, { status: 503 }), logger, maxQueue: 1 })
+    reporter.enqueue('a')
+    reporter.enqueue('b') // queue full
+    assert.equal(warnings.length, 1)
+    assert.match(warnings[0], /1 report lines dropped since .* \(queue full 1\)$/)
+    await reporter.flush() // a: 503
+    reporter.enqueue('c')
+    reporter.enqueue('d') // queue full
+    await reporter.flush() // c: 503
+    assert.equal(warnings.length, 1, 'within ten minutes: counted, not logged')
+
+    mock.timers.enable({ apis: ['Date'], now: Date.now() + 11 * 60_000 })
+    try {
+      reporter.enqueue('e') // no drop: the count since the last log is logged now
+      assert.equal(warnings.length, 2)
+      assert.match(warnings[1], /3 report lines dropped since .* \(status 503 2, queue full 1\)$/)
+      await reporter.flush()
+    } finally {
+      mock.timers.reset()
+    }
   })
 
   it('drops lines beyond the queue, and failed or rejected batches, logging once', async () => {

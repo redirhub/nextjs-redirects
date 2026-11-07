@@ -115,6 +115,8 @@ export interface ReporterOptions {
   maxQueue?: number
   /** How long one invocation keeps sending before it leaves the rest to the next; default 10,000. */
   budgetMs?: number
+  /** Requests out at the same time; default 4. */
+  maxInFlight?: number
 }
 
 const MAX_BATCH_LINES = 100
@@ -125,17 +127,25 @@ const DROP_LOG_EVERY_MS = 10 * 60_000
  * Sends report lines without delaying a response and without a timer.
  *
  * A line queued while nothing is being sent goes out at once, so a site with little traffic
- * reports each visit immediately and keeps nothing waiting. Lines queued while a request is out
- * wait for it and go together in the next one (at most 100 lines, 64 KB, gzip), so a burst costs
- * one request per hundred visits. The invocation that starts sending keeps itself alive (through
- * `keepAlive`) until the queue is empty; the others only add their line, so no request waits on
+ * reports each visit immediately and keeps nothing waiting. Lines queued while requests are out
+ * go together in the next one (at most 100 lines, 64 KB, gzip), so a burst costs one request per
+ * hundred visits; up to `maxInFlight` (4) requests are out at once, so a busy instance keeps up.
+ * The invocation that starts sending keeps itself alive (through `keepAlive`) until the queue is
+ * empty and its requests are back; the others only add their line, so no request waits on
  * another request's work. A failed or rejected batch is dropped and counted, never retried.
  */
 export class Reporter {
   #options: Required<Omit<ReporterOptions, 'logger'>> & { logger: Logger | undefined }
   #queue: string[] = []
+  /** The sender: the invocation that started it keeps it alive until it is done. */
   #sending: Promise<void> | null = null
-  #dropped = 0
+  /** The sender's requests out now, and when it started (for the budget); #running once it has. */
+  #out = new Set<Promise<void>>()
+  #started = 0
+  #running = false
+  /** Lines dropped since the last log, by reason. */
+  #dropped = new Map<string, number>()
+  #droppedSince = 0
   #lastDropLog = Number.NEGATIVE_INFINITY
 
   constructor(options: ReporterOptions) {
@@ -148,6 +158,7 @@ export class Reporter {
       timeoutMs: options.timeoutMs ?? 2000,
       maxQueue: options.maxQueue ?? 10_000,
       budgetMs: options.budgetMs ?? 10_000,
+      maxInFlight: options.maxInFlight ?? 4,
     }
   }
 
@@ -156,6 +167,7 @@ export class Reporter {
     if (this.#options.key === '') {
       return
     }
+    this.#logDrops()
     if (this.#queue.length >= this.#options.maxQueue) {
       this.#drop(1, 'queue full')
       return
@@ -164,6 +176,8 @@ export class Reporter {
     if (this.#sending === null) {
       this.#sending = this.#send()
       keepAlive?.(this.#sending)
+    } else if (this.#running) {
+      this.#fill()
     }
   }
 
@@ -181,14 +195,34 @@ export class Reporter {
   async #send(): Promise<void> {
     // Lines queued in the same turn of the event loop go in the first request.
     await Promise.resolve()
-    const started = Date.now()
+    this.#started = Date.now()
+    this.#running = true
     for (;;) {
-      if (this.#queue.length === 0 || Date.now() - started >= this.#options.budgetMs) {
+      this.#fill()
+      if (this.#out.size === 0) {
         // Checked and cleared in one step: a line queued after this starts a new sender.
+        this.#running = false
         this.#sending = null
         return
       }
-      await this.#post(this.#take())
+      await Promise.race(this.#out)
+    }
+  }
+
+  /**
+   * Starts requests for the waiting lines, within the budget: one when none is out, and more,
+   * up to maxInFlight, only for full batches, so lines that arrive while a request is out wait
+   * for it and go together. Called by the sender and on each line queued while it runs.
+   */
+  #fill(): void {
+    while (
+      this.#out.size < this.#options.maxInFlight &&
+      this.#queue.length > 0 &&
+      (this.#out.size === 0 || this.#queue.length >= MAX_BATCH_LINES) &&
+      Date.now() - this.#started < this.#options.budgetMs
+    ) {
+      const post: Promise<void> = this.#post(this.#take()).finally(() => this.#out.delete(post))
+      this.#out.add(post)
     }
   }
 
@@ -238,15 +272,28 @@ export class Reporter {
     }
   }
 
-  /** Counts dropped lines and logs them at most once per ten minutes. */
+  /** Counts dropped lines by reason; see #logDrops. */
   #drop(lines: number, reason: string): void {
-    this.#dropped += lines
-    const now = Date.now()
-    if (now - this.#lastDropLog < DROP_LOG_EVERY_MS) {
+    if (this.#dropped.size === 0) {
+      this.#droppedSince = Date.now()
+    }
+    this.#dropped.set(reason, (this.#dropped.get(reason) ?? 0) + lines)
+    this.#logDrops()
+  }
+
+  /**
+   * Logs the dropped lines: the first drop at once, then at most once per ten minutes with the
+   * total since the last log, by reason. Called on every drop and every line queued, so a count
+   * is logged even after the drops stop, without a timer.
+   */
+  #logDrops(): void {
+    if (this.#dropped.size === 0 || Date.now() - this.#lastDropLog < DROP_LOG_EVERY_MS) {
       return
     }
-    this.#options.logger?.warn(`${PACKAGE}: ${this.#dropped} report lines dropped (${reason})`)
-    this.#dropped = 0
-    this.#lastDropLog = now
+    const total = [...this.#dropped.values()].reduce((sum, n) => sum + n, 0)
+    const reasons = [...this.#dropped].map(([reason, n]) => `${reason} ${n}`).join(', ')
+    this.#options.logger?.warn(`${PACKAGE}: ${total} report lines dropped since ${new Date(this.#droppedSince).toISOString()} (${reasons})`)
+    this.#dropped.clear()
+    this.#lastDropLog = Date.now()
   }
 }

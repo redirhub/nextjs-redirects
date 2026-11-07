@@ -165,11 +165,13 @@ revalidated in the background (`event.waitUntil`) with `If-None-Match`, so no vi
 failure keeps the last good copy and waits 30 seconds before trying again.
 
 **Reports.** A line queued while nothing is being sent goes out at once; lines queued while a
-request is out go together in the next one (at most 100 lines or 64 KB, gzip, 2 second timeout).
-A quiet site reports each visit immediately and keeps no function waiting; a busy one sends one
-request per hundred visits. Only the invocation that starts sending is kept alive for it, for at
-most 10 seconds. A failed or rejected batch is dropped, never retried; beyond 10,000 waiting
-lines, lines are dropped.
+request is out go together in the next one (at most 100 lines or 64 KB, gzip, 2 second timeout),
+and each full batch opens another request, up to four at once. A quiet site reports each visit
+immediately and keeps no function waiting; a busy one sends one request per hundred visits and
+keeps up even when the instance's CPU is saturated. Only the invocation that starts sending is
+kept alive for it, for at most 10 seconds. A failed or rejected batch is dropped, never retried;
+beyond 10,000 waiting lines, lines are dropped. Dropped lines are logged at once, then at most
+every ten minutes with the total by reason.
 
 ## Privacy
 
