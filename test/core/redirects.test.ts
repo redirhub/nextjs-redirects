@@ -241,6 +241,14 @@ describe('createRedirects', () => {
     )
   })
 
+  it('names the check path of the rules in use, loading them first, and null without rules', async () => {
+    const p = platform()
+    assert.equal(await createRedirects({ rulesUrl: RULES, fetch: p.fetch, logger: null }).checkPath(), '/_redirhub/check')
+    assert.equal(await createRedirects({ rulesUrl: '', fetch: p.fetch, logger: null }).checkPath(), null)
+    const down = createRedirects({ rulesUrl: RULES, fetch: async () => new Response(null, { status: 503 }), logger: null, firstWaitMs: 50 })
+    assert.equal(await down.checkPath(), null)
+  })
+
   it('fails open', async () => {
     assert.equal(await createRedirects({ rulesUrl: '' }).handle(new Request('https://shop.example.test/old')), null)
     const broken = createRedirects({ rulesUrl: RULES, fetch: async () => Promise.reject(new Error('down')), logger: null })

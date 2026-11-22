@@ -3,7 +3,7 @@
  * pages, before the app's own routes.
  *
  * The proxy never sees a page's final status, so the app's 404 page tells it: the page loads
- * `<script async src="/_redirhub/404">`, which the proxy serves; the script posts the page's
+ * `<script async src="/_redirhub/404">` (beside the rules' check path), which the proxy serves; the script posts the page's
  * address back, and the proxy reports the 404 or answers the hostname's catch-all, which the
  * script follows. Where your app sees the final answer itself (a route handler),
  * `createRedirects(…).afterSite` does the same on the server.
@@ -32,24 +32,32 @@ export interface ProxyOptions extends Omit<RedirectsOptions, 'report404'> {}
 export function createProxy(options: ProxyOptions): (request: Request, event?: WaitUntil) => Promise<Response | undefined> {
   const redirects = createRedirects(options)
   return async (request, event) => {
-    if (new URL(request.url).pathname === NOT_FOUND_PATH) {
-      return notFound(redirects, request, event)
+    const { pathname } = new URL(request.url)
+    if (pathname.endsWith('/404') && pathname === notFoundPath(await redirects.checkPath(event))) {
+      return notFound(redirects, request, pathname, event)
     }
     return (await redirects.handle(request, event)) ?? undefined
   }
 }
 
-/** Where the 404 page's script comes from and posts to. */
-export const NOT_FOUND_PATH = '/_redirhub/404'
+/**
+ * Where the 404 page's script comes from and posts to: beside the check path, `404` in place of
+ * its last segment (`/_redirhub/check` gives `/_redirhub/404`), so it carries the platform's own
+ * name. Null for a check path at the root, where `/404` could be the site's own page.
+ */
+export function notFoundPath(checkPath: string | null): string | null {
+  const folder = checkPath?.slice(0, checkPath.lastIndexOf('/')) ?? ''
+  return folder === '' ? null : `${folder}/404`
+}
 
 /** The longest body the 404 script may post: its address and its Referer. */
 const MAX_NOT_FOUND_BODY = 8192
 
 /**
- * Posts the page's address and Referer; follows a catch-all's answer (a `location` to go to, or a
- * frame page to show). One request per page load; never throws into the page.
+ * Posts the page's address and Referer to `path`; follows a catch-all's answer (a `location` to
+ * go to, or a frame page to show). One request per page load; never throws into the page.
  */
-const NOT_FOUND_SCRIPT = `fetch(${JSON.stringify(NOT_FOUND_PATH)},{method:"POST",keepalive:true,headers:{"Content-Type":"text/plain"},body:location.href+"\\n"+document.referrer}).then(function(r){return r.status===200?r.json():null}).then(function(a){if(a&&a.location)location.replace(a.location);else if(a&&a.html){document.open();document.write(a.html);document.close()}}).catch(function(){})
+const notFoundScript = (path: string) => `fetch(${JSON.stringify(path)},{method:"POST",keepalive:true,headers:{"Content-Type":"text/plain"},body:location.href+"\\n"+document.referrer}).then(function(r){return r.status===200?r.json():null}).then(function(a){if(a&&a.location)location.replace(a.location);else if(a&&a.html){document.open();document.write(a.html);document.close()}}).catch(function(){})
 `
 
 /**
@@ -58,9 +66,9 @@ const NOT_FOUND_SCRIPT = `fetch(${JSON.stringify(NOT_FOUND_PATH)},{method:"POST"
  * answers: `200` with `{ location }` or `{ html }` for the script, `204` otherwise. An address on
  * another hostname, or a body that is not one, is ignored (`204`): nothing is reported.
  */
-async function notFound(redirects: Redirects, request: Request, event?: WaitUntil): Promise<Response> {
+async function notFound(redirects: Redirects, request: Request, path: string, event?: WaitUntil): Promise<Response> {
   if (request.method === 'GET' || request.method === 'HEAD') {
-    return new Response(request.method === 'HEAD' ? null : NOT_FOUND_SCRIPT, {
+    return new Response(request.method === 'HEAD' ? null : notFoundScript(path), {
       headers: { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'public, max-age=3600' },
     })
   }
@@ -72,7 +80,7 @@ async function notFound(redirects: Redirects, request: Request, event?: WaitUnti
   const [address = '', referer = ''] = body.slice(0, MAX_NOT_FOUND_BODY).split('\n')
   const page = URL.canParse(address) ? new URL(address) : null
   const host = (request.headers.get('host') ?? new URL(request.url).host).toLowerCase()
-  if (!page || (page.protocol !== 'https:' && page.protocol !== 'http:') || page.host.toLowerCase() !== host || page.pathname === NOT_FOUND_PATH) {
+  if (!page || (page.protocol !== 'https:' && page.protocol !== 'http:') || page.host.toLowerCase() !== host || page.pathname === path) {
     return nothing()
   }
   // The visit as the server would have seen it: the page's path and query, the visitor's own
