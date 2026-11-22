@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { gunzipSync } from 'node:zlib'
 import { afterEach, beforeEach, describe, it } from 'node:test'
 
-import { createProxy } from '../src/index.ts'
+import { createProxy, notFoundPath } from '../src/index.ts'
 
 const RULES = 'https://rules.example.test/FAKE.txt'
 const FILE = [
@@ -129,6 +129,18 @@ describe('createProxy', () => {
       await event.done()
       assert.equal(lines.length, 1)
       assert.match(lines[0], /"GET https:\/\/shop\.example\.test\/gone HTTP\/1\.1" 302 0 "-" "Browser\/1" file=shop\.example\.test\/\* destination=https:\/\/www\.example\.test\/gone$/)
+    })
+
+    it('lives beside the check path, so it carries the platform\'s name', async () => {
+      const file = FILE.replace('@format 1\n', '@format 1\n@check /_acme/check\n')
+      globalThis.fetch = async (input) => (String(input) === RULES ? new Response(file, { headers: { ETag: '"r3"' } }) : new Response(null, { status: 204 }))
+      const proxy = createProxy({ rulesUrl: RULES, key: 'k', logger: null })
+      const script = await proxy(new Request('http://localhost:3000/_acme/404', { headers }))
+      assert.match((await script?.text()) ?? '', /fetch\("\/_acme\/404"/)
+      assert.equal(await proxy(new Request('http://localhost:3000/_redirhub/404', { headers })), undefined, 'not under another name')
+      assert.equal(notFoundPath('/_acme/check'), '/_acme/404')
+      assert.equal(notFoundPath('/check'), null, 'never the site\'s own /404')
+      assert.equal(notFoundPath(null), null)
     })
 
     it('ignores an address on another hostname and a body that is not one', async () => {

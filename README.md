@@ -33,6 +33,7 @@ To add this to a Next.js app:
 4. Make sure `config.matcher` reaches `/_redirhub/check`, `/_redirhub/404` and the redirected paths.
 5. In the 404 page (`app/not-found.tsx`; Pages Router `pages/404.tsx`) add
    `<script async src="/_redirhub/404" />`: it reports the page's 404s and follows a catch-all rule.
+   The path sits beside the check path: `404` in place of `check`.
 6. Check: `GET https://<hostname>/_redirhub/check` answers `token=… etag=…`, and a rule's path
    redirects with its status. Then press **Check now** in the dashboard.
 
@@ -172,7 +173,9 @@ whether the app answers 404. The 404 page tells it instead: add one line to `app
 <script async src="/_redirhub/404" />
 ```
 
-The proxy serves this script (a few hundred bytes, cached for an hour). In the visitor's browser
+The path is the check path's folder with `404` (`/_redirhub/check` gives `/_redirhub/404`; a
+platform with its own check path has its own). The proxy serves this script (a few hundred bytes,
+cached for an hour). In the visitor's browser
 it posts the page's address and Referer back to `/_redirhub/404`, and the proxy treats that as
 the app's 404 for that address: with a catch-all rule (`{host}/*`) it answers the redirect, which
 the script follows with `location.replace` (a frame rule's page is shown in place), and reports

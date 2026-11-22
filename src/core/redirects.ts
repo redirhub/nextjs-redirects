@@ -93,6 +93,11 @@ export interface Redirects {
    * or is reported; any other answer is returned unchanged.
    */
   afterSite(request: Request, response: Response, context?: WaitUntil): Promise<Response>
+  /**
+   * The check path of the rules in use (`@check`), downloading them first if there are none yet;
+   * null without rules. A platform entry places its own paths beside it. Never throws.
+   */
+  checkPath(context?: WaitUntil): Promise<string | null>
   /** `handle`, then the site (`next`), then `afterSite`. */
   serve(request: Request, next: (request: Request) => Promise<Response>, context?: WaitUntil): Promise<Response>
   /** Sends the report lines still waiting (tests, graceful shutdown). */
@@ -246,6 +251,14 @@ export function createRedirects(options: InternalOptions): Redirects {
   return {
     handle,
     afterSite,
+    async checkPath(context) {
+      try {
+        return (await source?.get(keepAliveOf(context)))?.checkPath ?? null
+      } catch (error) {
+        warn(error)
+        return null
+      }
+    },
     async serve(request, next, context) {
       return (await handle(request, context)) ?? afterSite(request, await next(request), context)
     },
