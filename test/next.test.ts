@@ -84,4 +84,63 @@ describe('createProxy', () => {
       ['https', 'http']
     )
   })
+
+  describe('the 404 page script', () => {
+    const headers = { host: 'shop.example.test', 'x-forwarded-for': '198.51.100.7', 'user-agent': 'Browser/1' }
+    const post = (body: string, host = 'shop.example.test') =>
+      new Request('http://localhost:3000/_redirhub/404', { method: 'POST', headers: { ...headers, host, 'content-type': 'text/plain' }, body })
+
+    it('serves the script, which posts the page and follows a catch-all', async () => {
+      const proxy = createProxy({ rulesUrl: RULES, key: 'k', logger: null })
+      const response = await proxy(new Request('http://localhost:3000/_redirhub/404', { headers }))
+      assert.equal(response?.status, 200)
+      assert.equal(response?.headers.get('content-type'), 'text/javascript; charset=utf-8')
+      const script = (await response?.text()) ?? ''
+      assert.match(script, /fetch\("\/_redirhub\/404",\{method:"POST"/)
+      assert.match(script, /location\.replace\(a\.location\)/)
+      new Function(script) // valid JavaScript
+    })
+
+    it('reports a 404 page with the visitor, the page and its Referer', async () => {
+      const file = FILE.replace('shop.example.test/*\thttps://www.example.test/\t302\tp\n', '')
+      globalThis.fetch = async (input, init) => {
+        const url = String(input instanceof Request ? input.url : input)
+        if (url === RULES) return new Response(file, { headers: { ETag: '"r2"' } })
+        lines.push(...gunzipSync(Buffer.from(init?.body as ArrayBuffer)).toString().split('\n').filter(Boolean))
+        return new Response(null, { status: 204 })
+      }
+      const proxy = createProxy({ rulesUrl: RULES, key: 'k', logger: null })
+      const event = context()
+      await proxy(new Request('http://localhost:3000/gone', { headers }), event) // the page itself: loads the rules
+      const response = await proxy(post('https://shop.example.test/gone?x=1\nhttps://www.google.com/'), event)
+      assert.equal(response?.status, 204)
+      await event.done()
+      assert.equal(lines.length, 1)
+      assert.match(lines[0], /^198\.51\.100\.7 - - \[[^\]]+\] "GET https:\/\/shop\.example\.test\/gone\?x=1 HTTP\/1\.1" 404 0 "https:\/\/www\.google\.com\/" "Browser\/1"$/)
+    })
+
+    it('answers the catch-all for the script to follow, and reports that redirect', async () => {
+      const proxy = createProxy({ rulesUrl: RULES, key: 'k', logger: null })
+      const event = context()
+      await proxy(new Request('http://localhost:3000/gone', { headers }), event)
+      const response = await proxy(post('https://shop.example.test/gone\n'), event)
+      assert.equal(response?.status, 200)
+      assert.deepEqual(await response?.json(), { location: 'https://www.example.test/gone' })
+      await event.done()
+      assert.equal(lines.length, 1)
+      assert.match(lines[0], /"GET https:\/\/shop\.example\.test\/gone HTTP\/1\.1" 302 0 "-" "Browser\/1" file=shop\.example\.test\/\* destination=https:\/\/www\.example\.test\/gone$/)
+    })
+
+    it('ignores an address on another hostname and a body that is not one', async () => {
+      const proxy = createProxy({ rulesUrl: RULES, key: 'k', logger: null })
+      const event = context()
+      await proxy(new Request('http://localhost:3000/gone', { headers }), event)
+      for (const body of ['https://other.example.test/gone\n', 'not a url', 'javascript:alert(1)', '']) {
+        assert.equal((await proxy(post(body), event))?.status, 204, body)
+      }
+      assert.equal((await proxy(post('https://shop.example.test/gone\n', 'other.example.test'), event))?.status, 204)
+      await event.done()
+      assert.equal(lines.length, 0)
+    })
+  })
 })
