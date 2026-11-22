@@ -30,8 +30,10 @@ To add this to a Next.js app:
    return `response` when it is set. Keep the app's own proxy logic after it.
 3. Two server-side environment variables: the rules address and the integration key from the
    RedirHub dashboard (names like `ACME_RULES_URL`, `ACME_INTEGRATION_KEY`; never `NEXT_PUBLIC_`).
-4. Make sure `config.matcher` reaches `/_redirhub/check` and the redirected paths.
-5. Check: `GET https://<hostname>/_redirhub/check` answers `token=… etag=…`, and a rule's path
+4. Make sure `config.matcher` reaches `/_redirhub/check`, `/_redirhub/404` and the redirected paths.
+5. In the 404 page (`app/not-found.tsx`; Pages Router `pages/404.tsx`) add
+   `<script async src="/_redirhub/404" />`: it reports the page's 404s and follows a catch-all rule.
+6. Check: `GET https://<hostname>/_redirhub/check` answers `token=… etag=…`, and a rule's path
    redirects with its status. Then press **Check now** in the dashboard.
 
 Do not reimplement the rules format: this package passes the specification's golden sample.
@@ -78,7 +80,8 @@ export async function proxy(request: NextRequest, event: NextFetchEvent) {
 ```
 
 - Call it first, before rewrites and locale handling: rules match the path as the visitor sent it.
-- The `matcher` must let the check path (`/_redirhub/check`) and the paths you redirect through.
+- The `matcher` must let the check path (`/_redirhub/check`), `/_redirhub/404` and the paths you
+  redirect through.
   A matcher that skips every path with a dot (a common default) also skips rules such as
   `/old.html`.
 - `redirects()` in `next.config` run before the proxy: don't let them shadow these paths.
@@ -161,10 +164,28 @@ The hostname is taken from the `Host` header (self-hosted, the request URL names
 Matching follows format v1: the hostname in any case, port ignored; the path case-sensitive,
 percent-decoded, leading and trailing slashes ignored; scheme and query ignored.
 
-**No catch-all, no 404 reports.** The proxy runs before the page, so it never sees whether the app
-answers 404: a hostname's catch-all rule (`{host}/*`, a redirect or a frame) is not served and the app's 404s are not
-reported. Where you do see the final answer, e.g. in a route handler, `createRedirects()` from this
-package gives you `afterSite(request, response, context)`, which adds both.
+**Catch-all and 404 reports, from the 404 page.** The proxy runs before the page, so it never sees
+whether the app answers 404. The 404 page tells it instead: add one line to `app/not-found.tsx`
+(Pages Router: `pages/404.tsx`):
+
+```tsx
+<script async src="/_redirhub/404" />
+```
+
+The proxy serves this script (a few hundred bytes, cached for an hour). In the visitor's browser
+it posts the page's address and Referer back to `/_redirhub/404`, and the proxy treats that as
+the app's 404 for that address: with a catch-all rule (`{host}/*`) it answers the redirect, which
+the script follows with `location.replace` (a frame rule's page is shown in place), and reports
+it; otherwise, for a hostname with `report404`, it reports the 404 with the visitor's address and
+User-Agent. Pages stay static: nothing reads the request on the server. It covers missing routes
+and `notFound()` alike, including client-side navigation.
+
+It only sees visitors that run JavaScript (people, and crawlers that render pages such as
+Googlebot), and the catch-all is a browser redirect, not a 301 on the first response. Where you
+see the final answer on the server, e.g. in a route handler, `createRedirects()` from this package
+gives you `afterSite(request, response, context)`, which does both there. Anyone can post to
+`/_redirhub/404`: an address on another hostname is ignored, so the worst a stranger can do is
+add made-up 404s to your own reports.
 
 **Rules download.** The first request of a new instance starts the download and waits for it at
 most one second; if the rules server is slower, that request goes on without rules and the download
@@ -194,11 +215,11 @@ That is the visitor's IP address (or `-`, or anonymized with `anonymizeIp`), the
 method, the requested URL with its query string, the status, the Referer and the User-Agent (each
 cut to 1 KB), the rule's source and the `Location` sent (for a frame page, reported with status
 `200`, its `src`). The protocol is always written `HTTP/1.1`. No cookies, other headers or bodies
-are sent, and only redirects and frame pages are reported. Reports go only to the `@hits` address of your rules file, with your key.
+are sent, and only redirects, frame pages and 404s are reported. Reports go only to the `@hits` address of your rules file, with your key.
 
 ## Limits
 
-- No catch-all and no 404 reports in the proxy (see above).
+- Catch-all and 404 reports only through the 404 page's script, for visitors that run JavaScript (see above).
 - The rules live in each instance's memory: a new instance (a cold start) waits up to one second
   for them, and serves no redirects until they arrive.
 - Changes are live within `@refresh` seconds per instance (60 by default).

@@ -2,9 +2,11 @@
  * Next.js (`proxy.ts` in Next 16+, `middleware.ts` before): the check path, exact rules and frame
  * pages, before the app's own routes.
  *
- * The proxy never sees a page's final status, so there is no catch-all and no 404 report here;
- * where your app does see the final answer (a route handler), `createRedirects(…).afterSite` adds
- * them.
+ * The proxy never sees a page's final status, so the app's 404 page tells it: the page loads
+ * `<script async src="/_redirhub/404">`, which the proxy serves; the script posts the page's
+ * address back, and the proxy reports the 404 or answers the hostname's catch-all, which the
+ * script follows. Where your app sees the final answer itself (a route handler),
+ * `createRedirects(…).afterSite` does the same on the server.
  */
 
 import { createRedirects as create, type Redirects, type RedirectsOptions, type WaitUntil } from './core/redirects.ts'
@@ -29,7 +31,74 @@ export interface ProxyOptions extends Omit<RedirectsOptions, 'report404'> {}
  */
 export function createProxy(options: ProxyOptions): (request: Request, event?: WaitUntil) => Promise<Response | undefined> {
   const redirects = createRedirects(options)
-  return async (request, event) => (await redirects.handle(request, event)) ?? undefined
+  return async (request, event) => {
+    if (new URL(request.url).pathname === NOT_FOUND_PATH) {
+      return notFound(redirects, request, event)
+    }
+    return (await redirects.handle(request, event)) ?? undefined
+  }
+}
+
+/** Where the 404 page's script comes from and posts to. */
+export const NOT_FOUND_PATH = '/_redirhub/404'
+
+/** The longest body the 404 script may post: its address and its Referer. */
+const MAX_NOT_FOUND_BODY = 8192
+
+/**
+ * Posts the page's address and Referer; follows a catch-all's answer (a `location` to go to, or a
+ * frame page to show). One request per page load; never throws into the page.
+ */
+const NOT_FOUND_SCRIPT = `fetch(${JSON.stringify(NOT_FOUND_PATH)},{method:"POST",keepalive:true,headers:{"Content-Type":"text/plain"},body:location.href+"\\n"+document.referrer}).then(function(r){return r.status===200?r.json():null}).then(function(a){if(a&&a.location)location.replace(a.location);else if(a&&a.html){document.open();document.write(a.html);document.close()}}).catch(function(){})
+`
+
+/**
+ * `GET`: the script. `POST`: the 404 page at the address in the body was shown on this hostname;
+ * it goes through `afterSite` as a 404 answer, so it is reported (`report404`) or the catch-all
+ * answers: `200` with `{ location }` or `{ html }` for the script, `204` otherwise. An address on
+ * another hostname, or a body that is not one, is ignored (`204`): nothing is reported.
+ */
+async function notFound(redirects: Redirects, request: Request, event?: WaitUntil): Promise<Response> {
+  if (request.method === 'GET' || request.method === 'HEAD') {
+    return new Response(request.method === 'HEAD' ? null : NOT_FOUND_SCRIPT, {
+      headers: { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'public, max-age=3600' },
+    })
+  }
+  const nothing = () => new Response(null, { status: 204, headers: { 'Cache-Control': 'no-store' } })
+  if (request.method !== 'POST') {
+    return new Response(null, { status: 405, headers: { Allow: 'GET, HEAD, POST' } })
+  }
+  const body = await request.text().catch(() => '')
+  const [address = '', referer = ''] = body.slice(0, MAX_NOT_FOUND_BODY).split('\n')
+  const page = URL.canParse(address) ? new URL(address) : null
+  const host = (request.headers.get('host') ?? new URL(request.url).host).toLowerCase()
+  if (!page || (page.protocol !== 'https:' && page.protocol !== 'http:') || page.host.toLowerCase() !== host || page.pathname === NOT_FOUND_PATH) {
+    return nothing()
+  }
+  // The visit as the server would have seen it: the page's path and query, the visitor's own
+  // headers (address, User-Agent) and the page's Referer.
+  const headers = new Headers(request.headers)
+  headers.delete('content-type')
+  headers.delete('content-length')
+  headers.set('x-forwarded-proto', page.protocol.replace(/:$/, ''))
+  if (referer.trim() === '') {
+    headers.delete('referer')
+  } else {
+    headers.set('referer', referer.trim())
+  }
+  const visit = new Request(new URL(page.pathname + page.search, request.url), { headers })
+  const answer = await redirects.afterSite(visit, new Response(null, { status: 404 }), event)
+  if (answer.status === 404) {
+    return nothing()
+  }
+  const location = answer.headers.get('location')
+  const reply = location ? { location: latin1ToUtf8(location) } : { html: await answer.text() }
+  return Response.json(reply, { headers: { 'Cache-Control': 'no-store' } })
+}
+
+/** A `Location` header carries UTF-8 bytes one per character (see byteString in core); read them back. */
+function latin1ToUtf8(value: string): string {
+  return /^[\x00-\x7f]*$/.test(value) ? value : new TextDecoder().decode(Uint8Array.from(value, (c) => c.charCodeAt(0)))
 }
 
 /**
